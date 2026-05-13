@@ -1,14 +1,14 @@
 import { PlayerColor } from "@/types/game";
 
 export const COLORS: PlayerColor[] = [
-  { hex: "#E84A8C", name: "분홍" },
-  { hex: "#3B82F6", name: "파랑" },
-  { hex: "#10B981", name: "초록" },
-  { hex: "#F59E0B", name: "주황" },
-  { hex: "#8B5CF6", name: "보라" },
-  { hex: "#EF4444", name: "빨강" },
-  { hex: "#06B6D4", name: "하늘" },
-  { hex: "#84CC16", name: "연두" },
-  { hex: "#EC4899", name: "자홍" },
-  { hex: "#6366F1", name: "남색" },
+  { hex: "#E11D48", name: "빨강" },
+  { hex: "#F97316", name: "주황" },
+  { hex: "#EAB308", name: "머스타드" },
+  { hex: "#22C55E", name: "초록" },
+  { hex: "#0EA5E9", name: "하늘" },
+  { hex: "#2563EB", name: "파랑" },
+  { hex: "#EC4899", name: "분홍" },
+  { hex: "#A855F7", name: "보라" },
+  { hex: "#92400E", name: "갈색" },
+  { hex: "#1a1a1a", name: "검정" },
 ];

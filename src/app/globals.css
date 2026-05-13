@@ -8,7 +8,6 @@ html, body {
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
 }
-
 body {
   background: #FAF6F0;
   color: #1a1a1a;
@@ -16,37 +15,31 @@ body {
   -webkit-user-select: none;
   touch-action: manipulation;
 }
-
 input, textarea {
   user-select: text;
   -webkit-user-select: text;
 }
-
 input, textarea, select {
   font-size: 16px;
 }
-
 @layer utilities {
   .safe-top { padding-top: env(safe-area-inset-top); }
   .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
-  
-  .invalid-toast-anim {
-    animation: toast-pop 1.5s ease forwards;
-  }
+  .invalid-toast-anim { animation: toast-pop 1.5s ease forwards; }
 }
-
 @keyframes toast-pop {
   0% { opacity: 0; transform: translate(-50%, 10px); }
   15% { opacity: 1; transform: translate(-50%, 0); }
   85% { opacity: 1; transform: translate(-50%, 0); }
   100% { opacity: 0; transform: translate(-50%, -4px); }
 }
-
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
-
-.pulse-dot {
-  animation: pulse-dot 1.4s ease-in-out infinite;
+.pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+@keyframes turn-glow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--glow-color, rgba(0,0,0,0.4)); }
+  50% { box-shadow: 0 0 0 6px transparent; }
 }
+.turn-glow { animation: turn-glow 1.6s ease-in-out infinite; }

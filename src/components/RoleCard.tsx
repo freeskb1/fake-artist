@@ -25,7 +25,6 @@ export default function RoleCard({ role, category, subject, fakeName }: Props) {
       </div>
     );
   }
-
   if (role === "fake") {
     return (
       <div className="bg-white rounded-3xl p-8 text-center">
@@ -45,7 +44,6 @@ export default function RoleCard({ role, category, subject, fakeName }: Props) {
       </div>
     );
   }
-
   return (
     <div className="bg-white rounded-3xl p-8 text-center">
       <p className="text-xs text-gray-500 mb-2">당신은</p>

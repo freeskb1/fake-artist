@@ -3,25 +3,21 @@
 import { useEffect, useRef } from "react";
 import { Stroke } from "@/types/game";
 
-type Props = {
-  strokes: Stroke[];
-  aspectRatio?: string;
-  className?: string;
-};
-
 export default function ResultCanvas({
   strokes,
   aspectRatio = "4 / 3",
   className = "",
-}: Props) {
+}: {
+  strokes: Stroke[];
+  aspectRatio?: string;
+  className?: string;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const wrap = canvas.parentElement;
     if (!wrap) return;
-
     const draw = () => {
       const rect = wrap.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
@@ -49,17 +45,12 @@ export default function ResultCanvas({
         ctx.stroke();
       });
     };
-
     draw();
     window.addEventListener("resize", draw);
     return () => window.removeEventListener("resize", draw);
   }, [strokes]);
-
   return (
-    <div
-      className={`bg-white rounded-2xl border border-black/5 ${className}`}
-      style={{ aspectRatio }}
-    >
+    <div className={`bg-white rounded-2xl border border-black/5 ${className}`} style={{ aspectRatio }}>
       <canvas ref={canvasRef} className="block w-full h-full" />
     </div>
   );

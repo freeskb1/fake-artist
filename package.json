@@ -1,6 +1,6 @@
 {
   "name": "fake-artist-game",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "firebase": "^11.0.2",
-    "next": "15.1.11",
+    "next": "^15.5.5",
     "qrcode": "^1.5.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.1.2",
+    "react-dom": "^19.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

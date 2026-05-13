@@ -1,20 +1,21 @@
-import { Player, RoundState, Point } from "@/types/game";
-import { pickRandomTopic } from "./topics";
+import { Player, RoundState, Point, PlayerColor } from "@/types/game";
+import { COLORS } from "./colors";
 
-export function createRound(players: Player[]): RoundState {
-  const qmIdx = Math.floor(Math.random() * players.length);
-  let fakeIdx = Math.floor(Math.random() * players.length);
-  while (fakeIdx === qmIdx) {
-    fakeIdx = Math.floor(Math.random() * players.length);
-  }
-
-  const { cat, subject } = pickRandomTopic();
+export function createRound(
+  players: Player[],
+  questionMasterId: string,
+  category: string,
+  subject: string
+): RoundState {
+  // QM 제외 나머지 중 가짜 랜덤 선택
+  const candidates = players.filter((p) => p.id !== questionMasterId);
+  const fake = candidates[Math.floor(Math.random() * candidates.length)];
   const maxTurns = 2 * (players.length - 1);
 
   return {
-    questionMasterId: players[qmIdx].id,
-    fakeArtistId: players[fakeIdx].id,
-    category: cat,
+    questionMasterId,
+    fakeArtistId: fake.id,
+    category,
     subject,
     currentTurnPlayerId: null,
     turnIndex: 0,
@@ -26,6 +27,20 @@ export function createRound(players: Player[]): RoundState {
     accusedId: null,
     fakeGuess: "",
     outcome: null,
+  };
+}
+
+/**
+ * 다음 출제자 시계방향 순환
+ */
+export function nextQuestionMaster(
+  players: Player[],
+  rotationIndex: number
+): { qmId: string; nextRotationIndex: number } {
+  const idx = rotationIndex % players.length;
+  return {
+    qmId: players[idx].id,
+    nextRotationIndex: (rotationIndex + 1) % players.length,
   };
 }
 
@@ -89,6 +104,12 @@ export function tallyVotes(votes: Record<string, string>): {
   return { accusedId: accused, tied };
 }
 
+/**
+ * 새 점수 룰
+ * - 가짜 잡힘 + 정답 틀림 → 진짜 예술가들 +1 (출제자 제외)
+ * - 가짜 잡힘 + 정답 맞힘 → 출제자 +2, 가짜 +2
+ * - 가짜 못 잡힘 → 출제자 +2, 가짜 +2
+ */
 export function calculateScores(
   outcome: "fake_hidden" | "fake_won" | "artists_won",
   round: RoundState,
@@ -98,11 +119,15 @@ export function calculateScores(
   players.forEach((p) => (result[p.id] = 0));
 
   if (outcome === "fake_hidden") {
-    result[round.fakeArtistId] += 1;
-    result[round.questionMasterId] += 1;
+    // 가짜 못 잡힘 → 출제자 +2, 가짜 +2
+    result[round.questionMasterId] += 2;
+    result[round.fakeArtistId] += 2;
   } else if (outcome === "fake_won") {
-    result[round.fakeArtistId] += 1;
+    // 가짜 잡힘 + 정답 맞힘 → 출제자 +2, 가짜 +2
+    result[round.questionMasterId] += 2;
+    result[round.fakeArtistId] += 2;
   } else if (outcome === "artists_won") {
+    // 가짜 잡힘 + 정답 틀림 → 진짜 예술가들(출제자 제외) +1
     players.forEach((p) => {
       if (p.id !== round.fakeArtistId && p.id !== round.questionMasterId) {
         result[p.id] += 1;
@@ -114,17 +139,17 @@ export function calculateScores(
 
 export const WIN_SCORE = 5;
 
-// Generate room code (3 digits per request)
 export function generateRoomCode(): string {
   return Math.floor(100 + Math.random() * 900).toString();
 }
 
-// Generate stable player id
 export function generatePlayerId(): string {
-  return (
-    "p_" +
-    Date.now().toString(36) +
-    "_" +
-    Math.random().toString(36).slice(2, 8)
-  );
+  return "p_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * 사용 가능한 색 찾기 (이미 다른 사람이 안 쓰는 것)
+ */
+export function findAvailableColor(usedHexes: string[]): PlayerColor {
+  return COLORS.find((c) => !usedHexes.includes(c.hex)) || COLORS[0];
 }

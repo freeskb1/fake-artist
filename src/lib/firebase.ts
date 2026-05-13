@@ -15,11 +15,7 @@ let app: FirebaseApp | null = null;
 let db: Database | null = null;
 
 export function isFirebaseConfigured(): boolean {
-  return !!(
-    firebaseConfig.apiKey &&
-    firebaseConfig.databaseURL &&
-    firebaseConfig.projectId
-  );
+  return !!(firebaseConfig.apiKey && firebaseConfig.databaseURL && firebaseConfig.projectId);
 }
 
 export function getFirebaseApp(): FirebaseApp | null {

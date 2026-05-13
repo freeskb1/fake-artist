@@ -5,8 +5,8 @@ import {
   update,
   onValue,
   remove,
-  serverTimestamp,
   onDisconnect,
+  runTransaction,
 } from "firebase/database";
 import { getDb } from "./firebase";
 import {
@@ -15,11 +15,11 @@ import {
   RoundState,
   Stroke,
   GamePhase,
+  GameMode,
+  PlayerColor,
 } from "@/types/game";
 import { COLORS } from "./colors";
 import { generateRoomCode, generatePlayerId } from "./gameLogic";
-
-const ROOM_TTL_MS = 1000 * 60 * 60 * 6; // 6h - cleanup hint
 
 function roomRef(code: string) {
   const db = getDb();
@@ -34,18 +34,14 @@ function roomChildRef(code: string, path: string) {
 }
 
 /**
- * Create a new room. Returns room code and host player id.
- * Tries multiple codes if collision.
+ * 방 생성
  */
-export async function createRoom(
-  hostName: string
-): Promise<{ code: string; playerId: string }> {
+export async function createRoom(hostName: string): Promise<{ code: string; playerId: string }> {
   const db = getDb();
   if (!db) throw new Error("Firebase not configured");
 
   const playerId = generatePlayerId();
 
-  // Try up to 10 codes to avoid collision
   for (let attempt = 0; attempt < 10; attempt++) {
     const code = generateRoomCode();
     const existing = await get(roomRef(code));
@@ -58,15 +54,19 @@ export async function createRoom(
       score: 0,
       isHost: true,
       connected: true,
+      readyForNextRound: false,
     };
 
     const room: RoomState = {
       code,
       hostId: playerId,
       phase: "lobby",
+      mode: "select",
       players: { [playerId]: host },
       playerOrder: [playerId],
       round: null,
+      qmRotationIndex: 0,
+      roundCount: 0,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -79,12 +79,9 @@ export async function createRoom(
 }
 
 /**
- * Join an existing room.
+ * 방 참여
  */
-export async function joinRoom(
-  code: string,
-  name: string
-): Promise<{ playerId: string }> {
+export async function joinRoom(code: string, name: string): Promise<{ playerId: string }> {
   const db = getDb();
   if (!db) throw new Error("Firebase not configured");
 
@@ -94,7 +91,6 @@ export async function joinRoom(
   }
   const room = snap.val() as RoomState;
 
-  // Check phase - only allow joining in lobby (for now)
   if (room.phase !== "lobby") {
     throw new Error("이미 게임이 진행 중입니다");
   }
@@ -105,10 +101,7 @@ export async function joinRoom(
     throw new Error("방이 가득 찼습니다 (최대 10명)");
   }
 
-  // Pick first unused color
-  const usedColors = new Set(
-    Object.values(existingPlayers).map((p) => p.color.hex)
-  );
+  const usedColors = new Set(Object.values(existingPlayers).map((p) => p.color.hex));
   const color = COLORS.find((c) => !usedColors.has(c.hex)) || COLORS[playerCount];
 
   const playerId = generatePlayerId();
@@ -119,6 +112,7 @@ export async function joinRoom(
     score: 0,
     isHost: false,
     connected: true,
+    readyForNextRound: false,
   };
 
   const newOrder = [...(room.playerOrder || []), playerId];
@@ -133,8 +127,41 @@ export async function joinRoom(
 }
 
 /**
- * Subscribe to room state changes
+ * 색상 변경 - transaction으로 충돌 방지
  */
+export async function changeColor(
+  code: string,
+  playerId: string,
+  newColor: PlayerColor
+): Promise<{ success: boolean; reason?: string }> {
+  const db = getDb();
+  if (!db) return { success: false, reason: "Firebase not configured" };
+
+  // transaction: 다른 사람이 이미 그 색이면 실패
+  const playersRef = ref(db, `rooms/${code}/players`);
+  const result = await runTransaction(playersRef, (currentPlayers: Record<string, Player> | null) => {
+    if (!currentPlayers) return currentPlayers;
+
+    // 다른 사람이 newColor 사용 중인지 체크
+    const conflict = Object.entries(currentPlayers).find(
+      ([id, p]) => id !== playerId && p.color?.hex === newColor.hex
+    );
+    if (conflict) {
+      // abort - 변경 안 함
+      return; // undefined return = abort
+    }
+
+    if (!currentPlayers[playerId]) return currentPlayers;
+    currentPlayers[playerId] = { ...currentPlayers[playerId], color: newColor };
+    return currentPlayers;
+  });
+
+  if (!result.committed) {
+    return { success: false, reason: "이미 다른 사람이 사용 중인 색이에요" };
+  }
+  return { success: true };
+}
+
 export function subscribeRoom(
   code: string,
   callback: (room: RoomState | null) => void
@@ -150,9 +177,6 @@ export function subscribeRoom(
   return () => unsub();
 }
 
-/**
- * Set up onDisconnect to mark player as disconnected
- */
 export function setupPresence(code: string, playerId: string) {
   const db = getDb();
   if (!db) return;
@@ -161,20 +185,14 @@ export function setupPresence(code: string, playerId: string) {
   onDisconnect(connRef).set(false);
 }
 
-/**
- * Leave room - if host leaves, transfer hostship or close room
- */
 export async function leaveRoom(code: string, playerId: string): Promise<void> {
   const snap = await get(roomRef(code));
   if (!snap.exists()) return;
   const room = snap.val() as RoomState;
 
   const remainingIds = (room.playerOrder || []).filter((id) => id !== playerId);
-  const remainingPlayers = { ...room.players };
-  delete remainingPlayers[playerId];
 
   if (remainingIds.length === 0) {
-    // No one left - delete room
     await remove(roomRef(code));
     return;
   }
@@ -185,7 +203,6 @@ export async function leaveRoom(code: string, playerId: string): Promise<void> {
     updatedAt: Date.now(),
   };
 
-  // If host left, promote next player
   if (room.hostId === playerId) {
     const newHost = remainingIds[0];
     updates.hostId = newHost;
@@ -195,32 +212,44 @@ export async function leaveRoom(code: string, playerId: string): Promise<void> {
   await update(roomRef(code), updates);
 }
 
-// ===== Game actions =====
-
 export async function updateRoomPhase(code: string, phase: GamePhase) {
   await update(roomRef(code), { phase, updatedAt: Date.now() });
 }
 
-export async function startRound(code: string, round: RoundState) {
+export async function setMode(code: string, mode: GameMode) {
+  await update(roomRef(code), { mode, updatedAt: Date.now() });
+}
+
+export async function startTopicSetup(code: string, qmId: string, nextRotationIndex: number) {
   await update(roomRef(code), {
-    round,
-    phase: "role-reveal" as GamePhase,
+    phase: "topic-setup" as GamePhase,
+    qmRotationIndex: nextRotationIndex,
+    "round/questionMasterId": qmId,
     updatedAt: Date.now(),
   });
 }
 
-export async function setLiveStroke(code: string, stroke: Stroke | null) {
-  await set(roomChildRef(code, "round/liveStroke"), stroke);
+export async function startRound(code: string, round: RoundState) {
+  // 모든 플레이어의 readyForNextRound 초기화
+  const snap = await get(roomRef(code));
+  if (!snap.exists()) return;
+  const room = snap.val() as RoomState;
+
+  const updates: Record<string, unknown> = {
+    round,
+    phase: "role-reveal" as GamePhase,
+    updatedAt: Date.now(),
+    roundCount: (room.roundCount || 0) + 1,
+  };
+  Object.keys(room.players || {}).forEach((pid) => {
+    updates[`players/${pid}/readyForNextRound`] = false;
+  });
+
+  await update(roomRef(code), updates);
 }
 
-export async function commitStroke(code: string, round: RoundState, stroke: Stroke) {
-  const newStrokes = [...round.strokes, stroke];
-  await update(roomChildRef(code, "round"), {
-    strokes: newStrokes,
-    liveStroke: null,
-    turnIndex: round.turnIndex + 1,
-    currentTurnPlayerId: round.currentTurnPlayerId, // will be updated separately
-  });
+export async function setLiveStroke(code: string, stroke: Stroke | null) {
+  await set(roomChildRef(code, "round/liveStroke"), stroke);
 }
 
 export async function updateRound(code: string, updates: Partial<RoundState>) {
@@ -251,16 +280,23 @@ export async function finalizeOutcome(
     phase: "result" as GamePhase,
     updatedAt: Date.now(),
   };
-  // Update each player's score
   Object.entries(scoreDeltas).forEach(([pid, delta]) => {
     if (delta > 0 && players[pid]) {
       updates[`players/${pid}/score`] = (players[pid].score || 0) + delta;
     }
   });
+  // ready 상태도 초기화
+  Object.keys(players).forEach((pid) => {
+    updates[`players/${pid}/readyForNextRound`] = false;
+  });
   await update(roomRef(code), updates);
 }
 
-export async function resetForNewRound(code: string) {
+export async function markReadyForNextRound(code: string, playerId: string, ready: boolean) {
+  await set(roomChildRef(code, `players/${playerId}/readyForNextRound`), ready);
+}
+
+export async function resetForNextRound(code: string) {
   await update(roomRef(code), {
     round: null,
     phase: "lobby" as GamePhase,
@@ -272,10 +308,17 @@ export async function resetScores(code: string, players: Record<string, Player>)
   const updates: Record<string, unknown> = {
     round: null,
     phase: "lobby" as GamePhase,
+    qmRotationIndex: 0,
+    roundCount: 0,
     updatedAt: Date.now(),
   };
   Object.keys(players).forEach((pid) => {
     updates[`players/${pid}/score`] = 0;
+    updates[`players/${pid}/readyForNextRound`] = false;
   });
   await update(roomRef(code), updates);
+}
+
+export async function setPlayerName(code: string, playerId: string, name: string) {
+  await set(roomChildRef(code, `players/${playerId}/name`), name);
 }

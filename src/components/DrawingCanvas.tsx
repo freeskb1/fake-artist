@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Point, Stroke } from "@/types/game";
 import { isStrokeValid } from "@/lib/gameLogic";
 
-type DrawingCanvasProps = {
+type Props = {
   strokes: Stroke[];
   liveStroke: Stroke | null;
   myColor: string;
@@ -24,7 +24,7 @@ export default function DrawingCanvas({
   onLiveStrokeUpdate,
   onStrokeComplete,
   showEmptyHint = false,
-}: DrawingCanvasProps) {
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [invalidToast, setInvalidToast] = useState(0);
@@ -37,7 +37,6 @@ export default function DrawingCanvas({
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
     if (!canvas || !wrap) return;
-
     const resize = () => {
       const rect = wrap.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
@@ -50,7 +49,6 @@ export default function DrawingCanvas({
       sizeRef.current = { w: rect.width, h: rect.height };
       redraw();
     };
-
     resize();
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
@@ -81,12 +79,7 @@ export default function DrawingCanvas({
     }
   }
 
-  function drawStroke(
-    ctx: CanvasRenderingContext2D,
-    stroke: Stroke,
-    w: number,
-    h: number
-  ) {
+  function drawStroke(ctx: CanvasRenderingContext2D, stroke: Stroke, w: number, h: number) {
     if (!stroke.points || stroke.points.length === 0) return;
     ctx.strokeStyle = stroke.color;
     ctx.lineWidth = 3.5;
@@ -113,7 +106,6 @@ export default function DrawingCanvas({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !canDraw) return;
-
     const handleStart = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
       if (strokeDoneRef.current) return;
@@ -124,7 +116,6 @@ export default function DrawingCanvas({
       lastLiveUpdateRef.current = Date.now();
       redraw();
     };
-
     const handleMove = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
       if (!currentStrokeRef.current || strokeDoneRef.current) return;
@@ -137,14 +128,12 @@ export default function DrawingCanvas({
       if (Math.sqrt(dx * dx + dy * dy) < 1) return;
       stroke.points.push(p);
       redraw();
-      // Throttle live stroke updates to ~20fps for network efficiency
       const now = Date.now();
       if (now - lastLiveUpdateRef.current > 50) {
         onLiveStrokeUpdate?.(stroke);
         lastLiveUpdateRef.current = now;
       }
     };
-
     const handleEnd = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
       const stroke = currentStrokeRef.current;
@@ -162,7 +151,6 @@ export default function DrawingCanvas({
       onStrokeComplete(stroke);
       currentStrokeRef.current = null;
     };
-
     canvas.addEventListener("touchstart", handleStart, { passive: false });
     canvas.addEventListener("touchmove", handleMove, { passive: false });
     canvas.addEventListener("touchend", handleEnd);
@@ -171,7 +159,6 @@ export default function DrawingCanvas({
     canvas.addEventListener("mousemove", handleMove);
     canvas.addEventListener("mouseup", handleEnd);
     canvas.addEventListener("mouseleave", handleEnd);
-
     return () => {
       canvas.removeEventListener("touchstart", handleStart);
       canvas.removeEventListener("touchmove", handleMove);
@@ -185,8 +172,17 @@ export default function DrawingCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canDraw, myColor, myPlayerId, onStrokeComplete, onLiveStrokeUpdate]);
 
+  // 내 차례면 캔버스 테두리 강조 (9번 요구사항)
+  const borderStyle = canDraw
+    ? { borderColor: myColor, borderWidth: "4px", boxShadow: `0 0 0 2px ${myColor}33` }
+    : {};
+
   return (
-    <div ref={wrapRef} className="relative bg-white rounded-2xl overflow-hidden flex-1 min-h-0">
+    <div
+      ref={wrapRef}
+      className="relative bg-white rounded-2xl overflow-hidden flex-1 min-h-0 border-2 border-black/5 transition-all"
+      style={borderStyle}
+    >
       <canvas ref={canvasRef} className="block w-full h-full touch-none" />
       {showEmptyHint && strokes.length === 0 && !liveStroke && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
