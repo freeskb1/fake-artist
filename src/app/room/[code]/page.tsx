@@ -694,16 +694,24 @@ function Guess({ room, me, players, round, code, onExit }: {
           </div>
           <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
-        <h2 className="text-xl font-bold mb-1">가짜의 마지막 기회</h2>
-        <p className="text-sm text-gray-500 mb-4">{fake.name}, 주제를 맞히면 +2점!</p>
+        <div className="bg-green-500 text-white rounded-3xl p-6 text-center mb-3">
+          <p className="text-sm opacity-80 mb-1">🎯 추리 성공</p>
+          <p className="text-3xl font-black tracking-tight">가짜 예술가 검거!</p>
+        </div>
 
-        <div className="bg-orange-50 rounded-2xl p-5 text-center mb-4">
-          <p className="text-xs text-orange-700 mb-2">지목당한 가짜</p>
+        <div className="bg-orange-50 rounded-2xl p-5 text-center mb-3">
+          <p className="text-xs text-orange-700 mb-2">붙잡힌 가짜</p>
           <div className="inline-flex items-center gap-2 mb-2">
             <div className="w-5 h-5 rounded-full" style={{ background: fake.color.hex }} />
             <p className="text-2xl font-black text-orange-800">{fake.name}</p>
           </div>
           <p className="text-xs text-orange-700">범주: {round.category}</p>
+        </div>
+
+        <div className="bg-amber-100 text-amber-900 rounded-2xl p-4 mb-4 text-sm leading-relaxed text-center">
+          하지만 아직 끝이 아니에요.
+          <br />
+          <b>{fake.name}</b>님이 주제를 맞히면 <b>가짜팀의 승리</b>입니다 (+2점)
         </div>
 
         <ResultCanvas strokes={round.strokes || []} className="mb-4" />

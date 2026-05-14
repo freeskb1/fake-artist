@@ -590,18 +590,25 @@ function VotingLocal({
 
       {step === "guess" && currentFake && (
         <>
-          <div className="bg-orange-50 rounded-2xl p-5 text-center mb-4">
-            <p className="text-xs text-orange-700 mb-2">
-              {accusedFakes.length === 2 ? `잡힌 가짜 ${currentGuessFakeIdx + 1}/${accusedFakes.length}` : "지목당했어요"}
-            </p>
+          <div className="bg-green-500 text-white rounded-3xl p-6 text-center mb-3">
+            <p className="text-sm opacity-80 mb-1">🎯 추리 성공</p>
+            <p className="text-3xl font-black tracking-tight">가짜 예술가 검거!</p>
+            {accusedFakes.length === 2 && (
+              <p className="text-xs opacity-80 mt-2">잡힌 가짜 {currentGuessFakeIdx + 1}/{accusedFakes.length}</p>
+            )}
+          </div>
+          <div className="bg-orange-50 rounded-2xl p-5 text-center mb-3">
+            <p className="text-xs text-orange-700 mb-2">붙잡힌 가짜</p>
             <div className="inline-flex items-center gap-2 mb-2">
               <div className="w-5 h-5 rounded-full" style={{ background: currentFake.color.hex }} />
               <p className="text-2xl font-black text-orange-800">{currentFake.name}</p>
             </div>
-            <p className="text-xs text-orange-700">진짜 가짜였습니다! 범주: <b>{round.category}</b></p>
-            <p className="text-sm text-orange-900 mt-3 leading-relaxed">
-              <b>{currentFake.name}</b>님, 주제를 맞히면 +2점!
-            </p>
+            <p className="text-xs text-orange-700">범주: <b>{round.category}</b></p>
+          </div>
+          <div className="bg-amber-100 text-amber-900 rounded-2xl p-4 mb-4 text-sm leading-relaxed text-center">
+            하지만 아직 끝이 아니에요.
+            <br />
+            <b>{currentFake.name}</b>님이 주제를 맞히면 <b>가짜팀의 승리</b>입니다 (+2점)
           </div>
           <input type="text" value={guess} onChange={(e) => setGuess(e.target.value)}
             placeholder="주제 입력" autoFocus
