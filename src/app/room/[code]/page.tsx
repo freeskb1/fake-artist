@@ -5,20 +5,23 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import QRCode from "qrcode";
 import {
-  RoomState, Player, RoundState, Stroke, GameMode,
+  RoomState, Player, RoundState, Stroke, GameMode, FakeGuess,
 } from "@/types/game";
 import {
   subscribeRoom, joinRoom, leaveRoom, setupPresence,
   startRound, startTopicSetup, setLiveStroke as fbSetLiveStroke,
-  updateRound, markRoleViewed, castVote, setGuess,
+  updateRound, markRoleViewed, castVote, addAccusedId,
+  setCurrentGuessingFake, addFakeGuess,
   finalizeOutcome, resetForNextRound, resetScores,
-  setMode as fbSetMode, changeColor, markReadyForNextRound,
+  setMode as fbSetMode, setTwoFakes as fbSetTwoFakes,
+  changeColor, markReadyForNextRound,
   setPlayerName as fbSetPlayerName, updateRoomPhase,
 } from "@/lib/room";
 import {
   createRound, nextArtistId, tallyVotes, calculateScores,
-  WIN_SCORE, nextQuestionMaster,
+  WIN_SCORE, nextQuestionMaster, getMinPlayers, getModeLabel, getModeDesc, predictNextQM,
 } from "@/lib/gameLogic";
+import { pickRandomTopic } from "@/lib/topics";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { COLORS } from "@/lib/colors";
 import DrawingCanvas from "@/components/DrawingCanvas";
@@ -50,19 +53,11 @@ export default function RoomPage() {
   }, [code]);
 
   useEffect(() => {
-    if (!code || !configured) {
-      setLoading(false);
-      return;
-    }
+    if (!code || !configured) { setLoading(false); return; }
     const unsub = subscribeRoom(code, (r) => {
       setLoading(false);
-      if (!r) {
-        setNotFound(true);
-        setRoom(null);
-        return;
-      }
-      setRoom(r);
-      setNotFound(false);
+      if (!r) { setNotFound(true); setRoom(null); return; }
+      setRoom(r); setNotFound(false);
     });
     return () => unsub();
   }, [code, configured]);
@@ -87,8 +82,7 @@ export default function RoomPage() {
       <main className="min-h-dvh flex items-center justify-center px-6">
         <div className="bg-amber-50 rounded-2xl p-6 text-amber-800 max-w-sm">
           <p className="font-bold mb-2">Firebase 설정이 필요해요</p>
-          <p className="text-sm mb-4">README.md 참고하세요.</p>
-          <Link href="/" className="block text-center bg-amber-800 text-white rounded-xl py-3 font-semibold">홈으로</Link>
+          <Link href="/" className="block text-center bg-amber-800 text-white rounded-xl py-3 font-semibold mt-4">홈으로</Link>
         </div>
       </main>
     );
@@ -121,8 +115,7 @@ export default function RoomPage() {
       );
     }
     return (
-      <JoinForm
-        code={code} joinName={joinName} setJoinName={setJoinName}
+      <JoinForm code={code} joinName={joinName} setJoinName={setJoinName}
         joining={joining} joinError={joinError}
         onJoin={async () => {
           if (!joinName.trim()) { setJoinError("닉네임을 입력해주세요"); return; }
@@ -166,14 +159,13 @@ function JoinForm({ code, joinName, setJoinName, joining, joinError, onJoin }: {
         <h1 className="text-3xl font-black tracking-tight mb-1">방 입장</h1>
         <p className="text-sm text-gray-500 mb-6">방 코드: <span className="font-bold tracking-widest">{code}</span></p>
         <p className="text-sm font-semibold text-gray-600 mb-2">닉네임</p>
-        <input
-          type="text" value={joinName}
+        <input type="text" value={joinName}
           onChange={(e) => setJoinName(e.target.value.slice(0, 8))}
           placeholder="최대 8자" autoFocus maxLength={8}
-          className="w-full px-4 py-4 rounded-xl border border-black/10 bg-white text-base outline-none focus:border-ink mb-4"
-        />
+          className="w-full px-4 py-4 rounded-xl border border-black/10 bg-white text-base outline-none focus:border-ink mb-4" />
         {joinError && <p className="text-sm text-red-600 mb-3">{joinError}</p>}
-        <button onClick={onJoin} disabled={joining || !joinName.trim()} className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
+        <button onClick={onJoin} disabled={joining || !joinName.trim()}
+          className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
           {joining ? "입장 중..." : "입장하기"}
         </button>
       </div>
@@ -190,7 +182,7 @@ function GameFlow({ room, myPlayerId, code, onExit }: {
   const round = room.round;
 
   if (room.phase === "lobby") return <Lobby room={room} me={me} players={players} code={code} isHost={isHost} onExit={onExit} />;
-  if (room.phase === "topic-setup" && round) return <TopicSetup room={room} me={me} players={players} round={round} code={code} isHost={isHost} onExit={onExit} />;
+  if (room.phase === "topic-setup" && round) return <TopicSetup room={room} me={me} players={players} round={round} code={code} onExit={onExit} />;
   if (room.phase === "role-reveal" && round) return <RoleReveal room={room} me={me} players={players} round={round} code={code} isHost={isHost} onExit={onExit} />;
   if (room.phase === "drawing" && round) return <Drawing room={room} me={me} players={players} round={round} code={code} onExit={onExit} />;
   if (room.phase === "voting" && round) return <Voting room={room} me={me} players={players} round={round} code={code} onExit={onExit} />;
@@ -199,7 +191,6 @@ function GameFlow({ room, myPlayerId, code, onExit }: {
   return null;
 }
 
-// ===== Lobby =====
 function Lobby({ room, me, players, code, isHost, onExit }: {
   room: RoomState; me: Player; players: Player[]; code: string; isHost: boolean; onExit: () => void;
 }) {
@@ -217,13 +208,26 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
 
   useEffect(() => { setNameDraft(me.name); }, [me.name]);
 
+  const minPlayers = getMinPlayers(room.mode, room.twoFakes);
+  const canStart = players.length >= minPlayers;
+
   async function handleStart() {
-    if (players.length < 4) { alert("최소 4명 필요해요"); return; }
+    if (!canStart) { alert(`최소 ${minPlayers}명 필요해요`); return; }
     setStarting(true);
-    // QM 순환
-    const { qmId, nextRotationIndex } = nextQuestionMaster(players, room.qmRotationIndex || 0);
-    await startTopicSetup(code, qmId, nextRotationIndex);
-    setStarting(false);
+    try {
+      if (room.mode === "auto") {
+        // 빠른 모드: 자동 출제 → 바로 role-reveal
+        const { cat, subject } = pickRandomTopic();
+        const newRound = createRound(players, room.mode, room.twoFakes, null, cat, subject);
+        await startRound(code, newRound);
+      } else {
+        // 출제자 있는 모드
+        const { qmId, nextRotationIndex } = nextQuestionMaster(players, room.qmRotationIndex || 0);
+        await startTopicSetup(code, qmId, nextRotationIndex);
+      }
+    } finally {
+      setStarting(false);
+    }
   }
 
   async function handleColorChange(c: typeof COLORS[0]) {
@@ -254,39 +258,38 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
         <div className="bg-white rounded-3xl p-6 mb-4 text-center">
           <p className="text-xs text-gray-500 mb-1">방 코드</p>
           <p className="text-5xl font-black tracking-[0.2em] mb-4">{code}</p>
-          {qrUrl && (
-            <div className="inline-block bg-white p-2 rounded-xl">
-              <img src={qrUrl} alt="QR" className="w-32 h-32" />
-            </div>
-          )}
+          {qrUrl && <div className="inline-block bg-white p-2 rounded-xl"><img src={qrUrl} alt="QR" className="w-32 h-32" /></div>}
           <p className="text-xs text-gray-500 mt-2">QR 스캔 또는 코드로 친구 초대</p>
         </div>
 
-        {/* 게임 모드 선택 - 호스트만 */}
-        {isHost && (
+        {isHost ? (
           <>
             <p className="text-sm font-semibold text-gray-600 mb-2">게임 모드</p>
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              <button
-                onClick={() => fbSetMode(code, "select")}
-                className={`p-3 rounded-xl text-left border ${room.mode === "select" ? "bg-ink text-white border-ink" : "bg-white border-black/10"}`}
-              >
-                <p className="text-sm font-bold">선택 모드</p>
-                <p className={`text-[11px] mt-0.5 ${room.mode === "select" ? "text-white/70" : "text-gray-500"}`}>카테고리에서 선택</p>
-              </button>
-              <button
-                onClick={() => fbSetMode(code, "free")}
-                className={`p-3 rounded-xl text-left border ${room.mode === "free" ? "bg-ink text-white border-ink" : "bg-white border-black/10"}`}
-              >
-                <p className="text-sm font-bold">자유 모드</p>
-                <p className={`text-[11px] mt-0.5 ${room.mode === "free" ? "text-white/70" : "text-gray-500"}`}>직접 입력</p>
-              </button>
+            <div className="space-y-2 mb-3">
+              {(["free", "select", "auto"] as GameMode[]).map((m) => (
+                <button key={m} onClick={() => fbSetMode(code, m)}
+                  className={`w-full p-3 rounded-xl text-left border ${room.mode === m ? "bg-ink text-white border-ink" : "bg-white border-black/10"}`}>
+                  <p className="text-sm font-bold">{getModeLabel(m)}</p>
+                  <p className={`text-[11px] mt-0.5 ${room.mode === m ? "text-white/70" : "text-gray-500"}`}>{getModeDesc(m)}</p>
+                </button>
+              ))}
             </div>
+            <button onClick={() => fbSetTwoFakes(code, !room.twoFakes)}
+              className={`w-full p-3 rounded-xl text-left border mb-4 ${room.twoFakes ? "bg-pink-50 border-pink-300" : "bg-white border-black/10"}`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold">가짜 2명 모드</p>
+                  <p className="text-[11px] mt-0.5 text-gray-500">가짜끼리 서로 모름</p>
+                </div>
+                <div className={`w-12 h-6 rounded-full p-0.5 transition ${room.twoFakes ? "bg-pink-500" : "bg-gray-300"}`}>
+                  <div className={`w-5 h-5 bg-white rounded-full transition-transform ${room.twoFakes ? "translate-x-6" : ""}`} />
+                </div>
+              </div>
+            </button>
           </>
-        )}
-        {!isHost && (
+        ) : (
           <div className="bg-gray-100 rounded-xl p-3 mb-4 text-center text-xs text-gray-600">
-            모드: <b>{room.mode === "select" ? "선택 모드" : "자유 모드"}</b> (호스트가 정함)
+            <b>{getModeLabel(room.mode)}</b>{room.twoFakes && " · 가짜 2명"} (호스트가 정함)
           </div>
         )}
 
@@ -296,20 +299,15 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
             <div key={p.id} className={`flex items-center gap-3 bg-white rounded-xl px-4 py-3 border ${p.id === me.id ? "border-ink" : "border-black/5"}`}>
               <div className="w-6 h-6 rounded-full" style={{ background: p.color.hex }} />
               {p.id === me.id && editingName ? (
-                <input
-                  type="text"
-                  value={nameDraft}
+                <input type="text" value={nameDraft}
                   onChange={(e) => setNameDraft(e.target.value.slice(0, 8))}
                   onBlur={saveName}
                   onKeyDown={(e) => e.key === "Enter" && saveName()}
                   maxLength={8} autoFocus
-                  className="flex-1 bg-transparent outline-none font-semibold"
-                />
+                  className="flex-1 bg-transparent outline-none font-semibold" />
               ) : (
-                <span
-                  className="flex-1 font-semibold cursor-pointer"
-                  onClick={() => p.id === me.id && setEditingName(true)}
-                >
+                <span className="flex-1 font-semibold cursor-pointer"
+                  onClick={() => p.id === me.id && setEditingName(true)}>
                   {p.name}{p.id === me.id && " (나)"}
                 </span>
               )}
@@ -319,10 +317,7 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
           ))}
         </div>
 
-        {/* 색상 선택 */}
-        <p className="text-sm font-semibold text-gray-600 mb-2">
-          내 색 변경 <span className="text-gray-400 font-normal">(현재: {me.color.name})</span>
-        </p>
+        <p className="text-sm font-semibold text-gray-600 mb-2">내 색 변경 <span className="text-gray-400 font-normal">(현재: {me.color.name})</span></p>
         <div className="bg-white rounded-2xl p-4 mb-4 border border-black/5">
           <ColorPicker myColor={me.color} usedColors={usedColors} onSelect={handleColorChange} />
           {colorError && <p className="text-xs text-red-600 text-center mt-2">{colorError}</p>}
@@ -342,8 +337,8 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
         )}
 
         {isHost ? (
-          <button onClick={handleStart} disabled={starting || players.length < 4} className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
-            {starting ? "시작 중..." : players.length < 4 ? `${4 - players.length}명 더 필요` : "게임 시작"}
+          <button onClick={handleStart} disabled={starting || !canStart} className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
+            {starting ? "시작 중..." : canStart ? "게임 시작" : `${minPlayers - players.length}명 더 필요`}
           </button>
         ) : (
           <div className="bg-gray-100 rounded-2xl py-4 text-center text-sm text-gray-500">
@@ -355,17 +350,16 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
   );
 }
 
-// ===== Topic Setup (출제자가 주제 입력/선택) =====
-function TopicSetup({ room, me, players, round, code, isHost, onExit }: {
+function TopicSetup({ room, me, players, round, code, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState;
-  code: string; isHost: boolean; onExit: () => void;
+  code: string; onExit: () => void;
 }) {
   const isQM = round.questionMasterId === me.id;
   const qmPlayer = players.find((p) => p.id === round.questionMasterId);
 
   async function handleConfirm(category: string, subject: string) {
     if (!isQM) return;
-    const newRound = createRound(players, me.id, category, subject);
+    const newRound = createRound(players, room.mode, room.twoFakes, me.id, category, subject);
     await startRound(code, newRound);
   }
 
@@ -377,9 +371,7 @@ function TopicSetup({ room, me, players, round, code, isHost, onExit }: {
             <div className="w-5 h-5 rounded-full" style={{ background: me.color.hex }} />
             <span className="text-xs font-semibold">{me.name}</span>
           </div>
-          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">
-            나가기
-          </button>
+          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
 
         {isQM ? (
@@ -398,17 +390,19 @@ function TopicSetup({ room, me, players, round, code, isHost, onExit }: {
   );
 }
 
-// ===== Role Reveal =====
 function RoleReveal({ room, me, players, round, code, isHost, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState;
   code: string; isHost: boolean; onExit: () => void;
 }) {
   const isQM = me.id === round.questionMasterId;
-  const isFake = me.id === round.fakeArtistId;
+  const isFake = round.fakeArtistIds.includes(me.id);
   const [shown, setShown] = useState(false);
   const viewed = round.rolesViewed || [];
   const allViewed = players.every((p) => viewed.includes(p.id));
   const myViewed = viewed.includes(me.id);
+  const fakeNames = round.fakeArtistIds
+    .map((fid) => players.find((p) => p.id === fid)?.name)
+    .filter(Boolean) as string[];
 
   async function handleSawIt() {
     setShown(true);
@@ -429,9 +423,7 @@ function RoleReveal({ room, me, players, round, code, isHost, onExit }: {
             <div className="w-5 h-5 rounded-full" style={{ background: me.color.hex }} />
             <span className="text-xs font-semibold">{me.name}</span>
           </div>
-          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">
-            나가기
-          </button>
+          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
         <h2 className="text-xl font-bold mb-1">내 역할 확인</h2>
         <p className="text-sm text-gray-500 mb-5">다른 사람이 보지 못하게 가린 뒤 탭하세요</p>
@@ -452,7 +444,7 @@ function RoleReveal({ room, me, players, round, code, isHost, onExit }: {
               role={isQM ? "qm" : isFake ? "fake" : "artist"}
               category={round.category}
               subject={round.subject}
-              fakeName={isQM ? players.find((p) => p.id === round.fakeArtistId)?.name : undefined}
+              fakeNames={isQM ? fakeNames : undefined}
             />
             <div className="flex flex-wrap gap-1.5 mt-4 mb-4">
               {players.map((p) => {
@@ -487,7 +479,6 @@ function RoleReveal({ room, me, players, round, code, isHost, onExit }: {
   );
 }
 
-// ===== Drawing =====
 function Drawing({ room, me, players, round, code, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState;
   code: string; onExit: () => void;
@@ -495,8 +486,9 @@ function Drawing({ room, me, players, round, code, onExit }: {
   const currentPlayer = players.find((p) => p.id === round.currentTurnPlayerId);
   const isMyTurn = round.currentTurnPlayerId === me.id;
   const isQM = me.id === round.questionMasterId;
-  const isFake = me.id === round.fakeArtistId;
+  const isFake = round.fakeArtistIds.includes(me.id);
   const advancingRef = useRef(false);
+  const drawers = players.filter((p) => p.id !== round.questionMasterId);
 
   const handleLiveStroke = useCallback((stroke: Stroke | null) => {
     if (!isMyTurn) return;
@@ -531,9 +523,7 @@ function Drawing({ room, me, players, round, code, onExit }: {
             <div className="w-5 h-5 rounded-full" style={{ background: me.color.hex }} />
             <span className="text-xs font-semibold">{me.name}</span>
           </div>
-          <button onClick={onExit} className="text-xs text-gray-500 px-2.5 py-1.5 rounded-full bg-white border border-black/5 font-semibold">
-            나가기
-          </button>
+          <button onClick={onExit} className="text-xs text-gray-500 px-2.5 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
 
         <div className="bg-white rounded-xl px-3 py-2 mb-2 flex items-center justify-between text-xs">
@@ -562,16 +552,16 @@ function Drawing({ room, me, players, round, code, onExit }: {
           showEmptyHint={(round.strokes || []).length === 0}
         />
 
-        <div className="flex gap-1 mt-2 px-1">
-          {players.filter((p) => p.id !== round.questionMasterId).map((p) => {
+        <div className="flex gap-1 mt-2 px-1 flex-wrap">
+          {drawers.map((p) => {
             const count = (round.strokes || []).filter((s) => s.playerId === p.id).length;
             const isActive = p.id === round.currentTurnPlayerId;
             return (
               <div key={p.id}
-                className={`flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded-lg border ${isActive ? "text-white" : "bg-white text-gray-500 border-black/5"}`}
+                className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1.5 rounded-lg border ${isActive ? "text-white" : "bg-white text-gray-500 border-black/5"}`}
                 style={isActive ? { background: p.color.hex, borderColor: p.color.hex } : {}}>
                 <div className="w-2 h-2 rounded-full" style={{ background: p.color.hex }} />
-                <span className="text-[10px] font-medium">{p.name}</span>
+                <span className="text-[10px] font-medium truncate max-w-full px-1">{p.name}</span>
                 <span className="text-[10px] opacity-60">{count}/2</span>
               </div>
             );
@@ -584,7 +574,6 @@ function Drawing({ room, me, players, round, code, onExit }: {
   );
 }
 
-// ===== Voting (멀티에서는 각자 투표) =====
 function Voting({ room, me, players, round, code, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState; code: string; onExit: () => void;
 }) {
@@ -601,12 +590,16 @@ function Voting({ room, me, players, round, code, onExit }: {
     tallyingRef.current = true;
     (async () => {
       const { accusedId, tied } = tallyVotes(votes);
-      if (accusedId === round.fakeArtistId && !tied) {
-        await updateRound(code, { accusedId });
+      if (accusedId && round.fakeArtistIds.includes(accusedId) && !tied) {
+        // 가짜 잡힘 → guess phase로
+        await updateRound(code, { accusedIds: [accusedId], currentGuessingFakeId: accusedId });
         await updateRoomPhase(code, "guess");
       } else {
-        const deltas = calculateScores("fake_hidden", round, players);
-        await finalizeOutcome(code, "fake_hidden", deltas, room.players);
+        // 가짜 못 잡힘 → 바로 결과
+        const noAccusedRound = { ...round, accusedIds: accusedId ? [accusedId] : [], fakeGuesses: [] };
+        const { deltas, outcome } = calculateScores(noAccusedRound, players);
+        await updateRound(code, { accusedIds: noAccusedRound.accusedIds });
+        await finalizeOutcome(code, outcome, deltas, room.players);
       }
     })();
   }, [allVoted, isFirstVoter, votes, round, code, players, room.players]);
@@ -619,13 +612,12 @@ function Voting({ room, me, players, round, code, onExit }: {
             <div className="w-5 h-5 rounded-full" style={{ background: me.color.hex }} />
             <span className="text-xs font-semibold">{me.name}</span>
           </div>
-          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">
-            나가기
-          </button>
+          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
         <h2 className="text-xl font-bold mb-1">가짜 예술가 지목</h2>
         <p className="text-sm text-gray-500 mb-4">
           {isQM ? "출제자는 투표하지 않아요" : "누가 가짜라고 생각하나요?"}
+          {round.fakeArtistIds.length === 2 && !isQM && <><br/>가짜가 2명이지만 한 번에 1명만 지목됩니다.</>}
         </p>
 
         <ResultCanvas strokes={round.strokes || []} className="mb-4" />
@@ -666,24 +658,31 @@ function Voting({ room, me, players, round, code, onExit }: {
   );
 }
 
-// ===== Guess =====
 function Guess({ room, me, players, round, code, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState; code: string; onExit: () => void;
 }) {
-  const fake = players.find((p) => p.id === round.fakeArtistId)!;
-  const isFake = me.id === round.fakeArtistId;
+  const guessingFakeId = round.currentGuessingFakeId;
+  const fake = guessingFakeId ? players.find((p) => p.id === guessingFakeId) : null;
+  const isMyTurn = me.id === guessingFakeId;
   const [guess, setLocalGuess] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    if (!isFake) return;
+    if (!isMyTurn || !fake) return;
     setSubmitting(true);
     const correct = guess.trim() === round.subject;
-    await setGuess(code, guess);
-    const outcome: "fake_won" | "artists_won" = correct ? "fake_won" : "artists_won";
-    const deltas = calculateScores(outcome, round, players);
+    const newGuess: FakeGuess = { fakeId: fake.id, guess, correct };
+    const newGuesses = [...(round.fakeGuesses || []), newGuess];
+    await addFakeGuess(code, newGuess, round.fakeGuesses || []);
+
+    // 다음 가짜 추측이 남았나? (현재 룰: 한 번에 1명만 지목하니까, 추가 가짜 추측 없음)
+    // 결과 계산
+    const finalRound = { ...round, fakeGuesses: newGuesses };
+    const { deltas, outcome } = calculateScores(finalRound, players);
     await finalizeOutcome(code, outcome, deltas, room.players);
   }
+
+  if (!fake) return null;
 
   return (
     <main className="min-h-dvh flex flex-col px-4 max-w-md mx-auto safe-top safe-bottom">
@@ -693,15 +692,13 @@ function Guess({ room, me, players, round, code, onExit }: {
             <div className="w-5 h-5 rounded-full" style={{ background: me.color.hex }} />
             <span className="text-xs font-semibold">{me.name}</span>
           </div>
-          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">
-            나가기
-          </button>
+          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
         <h2 className="text-xl font-bold mb-1">가짜의 마지막 기회</h2>
-        <p className="text-sm text-gray-500 mb-4">{fake.name}, 주제를 맞히면 가짜의 승리!</p>
+        <p className="text-sm text-gray-500 mb-4">{fake.name}, 주제를 맞히면 +2점!</p>
 
         <div className="bg-orange-50 rounded-2xl p-5 text-center mb-4">
-          <p className="text-xs text-orange-700 mb-2">지목당했어요</p>
+          <p className="text-xs text-orange-700 mb-2">지목당한 가짜</p>
           <div className="inline-flex items-center gap-2 mb-2">
             <div className="w-5 h-5 rounded-full" style={{ background: fake.color.hex }} />
             <p className="text-2xl font-black text-orange-800">{fake.name}</p>
@@ -711,14 +708,11 @@ function Guess({ room, me, players, round, code, onExit }: {
 
         <ResultCanvas strokes={round.strokes || []} className="mb-4" />
 
-        {isFake ? (
+        {isMyTurn ? (
           <>
-            <input
-              type="text" value={guess}
-              onChange={(e) => setLocalGuess(e.target.value)}
+            <input type="text" value={guess} onChange={(e) => setLocalGuess(e.target.value)}
               placeholder="주제 추측해서 입력" autoFocus
-              className="w-full px-4 py-3.5 rounded-xl border border-black/10 bg-white text-base outline-none focus:border-ink mb-3"
-            />
+              className="w-full px-4 py-3.5 rounded-xl border border-black/10 bg-white text-base outline-none focus:border-ink mb-3" />
             <button onClick={submit} disabled={submitting} className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
               {submitting ? "제출 중..." : "정답 제출"}
             </button>
@@ -733,24 +727,28 @@ function Guess({ room, me, players, round, code, onExit }: {
   );
 }
 
-// ===== Result with Ready System (5번 요구사항) =====
 function Result({ room, me, players, round, code, isHost, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState;
   code: string; isHost: boolean; onExit: () => void;
 }) {
-  const fake = players.find((p) => p.id === round.fakeArtistId)!;
-  const qm = players.find((p) => p.id === round.questionMasterId)!;
+  const fakes = round.fakeArtistIds.map((fid) => players.find((p) => p.id === fid)!).filter(Boolean);
+  const qm = round.questionMasterId ? players.find((p) => p.id === round.questionMasterId) : null;
   const winner = players.find((p) => p.score >= WIN_SCORE);
   const matchEnded = !!winner;
+
+  // 다음 라운드 시작 권한자: free/select 모드는 다음 출제자, auto 모드는 호스트
+  const nextQMId = predictNextQM(players, room.qmRotationIndex || 0, room.mode);
+  const canStartNext = room.mode === "auto" ? isHost : (nextQMId === me.id);
 
   const myReady = me.readyForNextRound || false;
   const readyCount = players.filter((p) => p.readyForNextRound).length;
   const allReady = readyCount === players.length;
 
   const outcomeStyle = {
-    fake_hidden: { bg: "bg-pink-50", text: "text-pink-700", title: "가짜 + 출제자 승리", sub: "예술가들이 가짜를 못 찾았어요" },
-    fake_won: { bg: "bg-amber-50", text: "text-amber-700", title: "가짜 + 출제자 승리", sub: "지목당했지만 주제를 맞췄어요" },
+    fake_hidden: { bg: "bg-pink-50", text: "text-pink-700", title: "가짜팀 승리", sub: "예술가들이 가짜를 못 찾았어요" },
+    fake_won: { bg: "bg-amber-50", text: "text-amber-700", title: "가짜팀 승리", sub: "지목당했지만 주제를 맞췄어요" },
     artists_won: { bg: "bg-green-50", text: "text-green-700", title: "예술가들 승리", sub: "가짜를 찾았고 주제도 못 맞췄어요" },
+    mixed: { bg: "bg-purple-50", text: "text-purple-700", title: "혼전 결과", sub: "결과를 확인해보세요" },
   }[round.outcome!];
   const ranked = [...players].sort((a, b) => b.score - a.score);
 
@@ -759,11 +757,8 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
   }
 
   async function handleNextRound() {
-    if (!isHost) return;
-    if (!allReady) {
-      alert("모든 플레이어가 '다시 하기' 준비되어야 시작할 수 있어요");
-      return;
-    }
+    if (!canStartNext) return;
+    if (!allReady) { alert("모든 플레이어가 준비되어야 시작할 수 있어요"); return; }
     await resetForNextRound(code);
   }
 
@@ -780,9 +775,7 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
             <div className="w-5 h-5 rounded-full" style={{ background: me.color.hex }} />
             <span className="text-xs font-semibold">{me.name}</span>
           </div>
-          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">
-            나가기
-          </button>
+          <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
 
         {matchEnded && winner && (
@@ -803,16 +796,26 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
         <div className="bg-white rounded-2xl p-4 mb-3 border border-black/5">
           <ResultRow label="정답" value={`${round.category} · ${round.subject}`} />
           <ResultRow label="가짜 예술가" value={
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ background: fake.color.hex }} />{fake.name}
+            <span className="inline-flex flex-wrap gap-1.5 justify-end">
+              {fakes.map((f) => (
+                <span key={f.id} className="inline-flex items-center gap-1">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ background: f.color.hex }} />{f.name}
+                </span>
+              ))}
             </span>
           } />
-          <ResultRow label="출제자" value={
+          {qm && <ResultRow label="출제자" value={
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full" style={{ background: qm.color.hex }} />{qm.name}
             </span>
-          } />
-          {round.fakeGuess && <ResultRow label="가짜의 추측" value={round.fakeGuess} />}
+          } />}
+          {round.fakeGuesses && round.fakeGuesses.length > 0 && round.fakeGuesses.map((fg) => {
+            const fake = players.find((p) => p.id === fg.fakeId);
+            return (
+              <ResultRow key={fg.fakeId} label={`${fake?.name}의 추측`}
+                value={<span className={fg.correct ? "text-green-700 font-bold" : "text-red-700"}>{fg.guess} {fg.correct ? "✓" : "✗"}</span>} />
+            );
+          })}
         </div>
 
         <div className="bg-white rounded-2xl p-4 mb-4 border border-black/5">
@@ -827,7 +830,6 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
           ))}
         </div>
 
-        {/* 다시 하기 ready 시스템 (5번 요구사항) */}
         {!matchEnded && (
           <>
             <div className="bg-white rounded-2xl p-4 mb-3 border border-black/5">
@@ -844,21 +846,49 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
               </div>
             </div>
 
-            <button
-              onClick={handleToggleReady}
-              className={`w-full rounded-2xl py-4 font-bold text-base mb-2 ${myReady ? "bg-green-500 text-white" : "bg-white border border-black/10 text-ink"}`}
-            >
-              {myReady ? "✓ 다시 하기 준비 완료" : "다시 하기"}
-            </button>
-
-            {isHost && (
-              <button
-                onClick={handleNextRound}
-                disabled={!allReady}
-                className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base mb-2 disabled:opacity-30"
-              >
-                {allReady ? "다음 판 시작" : `대기 중 (${readyCount}/${players.length})`}
-              </button>
+            {canStartNext ? (
+              <>
+                {/* 다음 판 출제자 (또는 호스트) 본인은 "다음 판 시작" 한 버튼 */}
+                <button
+                  onClick={async () => {
+                    if (!myReady) await markReadyForNextRound(code, me.id, true);
+                    if (allReady || readyCount === players.length - 1) {
+                      // 본인이 ready 했고 모두 준비됐으면 시작
+                      setTimeout(handleNextRound, 100);
+                    }
+                  }}
+                  disabled={allReady ? false : !myReady && readyCount < players.length - 1}
+                  className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base mb-2 disabled:opacity-30"
+                >
+                  {allReady ? "다음 판 시작" :
+                   !myReady ? `다음 판 시작 (${readyCount}/${players.length})` :
+                   `대기 중 (${readyCount}/${players.length})`}
+                </button>
+                {room.mode !== "auto" && (
+                  <p className="text-xs text-center text-gray-500 mb-2">
+                    다음 출제자는 <b>{me.name}(나)</b>입니다
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={handleToggleReady}
+                  className={`w-full rounded-2xl py-4 font-bold text-base mb-2 ${myReady ? "bg-green-500 text-white" : "bg-white border border-black/10 text-ink"}`}
+                >
+                  {myReady ? `✓ 준비 완료 (${readyCount}/${players.length})` : `다시 하기 (${readyCount}/${players.length})`}
+                </button>
+                {room.mode !== "auto" && nextQMId && (
+                  <p className="text-xs text-center text-gray-500 mb-2">
+                    다음 출제자: <b>{players.find((p) => p.id === nextQMId)?.name}</b>
+                  </p>
+                )}
+                {room.mode === "auto" && !isHost && (
+                  <p className="text-xs text-center text-gray-500 mb-2">
+                    호스트가 다음 판을 시작합니다
+                  </p>
+                )}
+              </>
             )}
           </>
         )}
@@ -879,9 +909,9 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
 
 function ResultRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex justify-between items-center py-2.5 border-b border-black/5 last:border-0 text-sm">
-      <span className="text-gray-500">{label}</span>
-      <span className="font-medium">{value}</span>
+    <div className="flex justify-between items-start py-2.5 border-b border-black/5 last:border-0 text-sm gap-2">
+      <span className="text-gray-500 flex-shrink-0">{label}</span>
+      <span className="font-medium text-right">{value}</span>
     </div>
   );
 }

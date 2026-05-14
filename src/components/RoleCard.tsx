@@ -4,10 +4,10 @@ type Props = {
   role: "qm" | "fake" | "artist";
   category: string;
   subject: string;
-  fakeName?: string;
+  fakeNames?: string[]; // QM이 가짜 정체 알기 (1~2명)
 };
 
-export default function RoleCard({ role, category, subject, fakeName }: Props) {
+export default function RoleCard({ role, category, subject, fakeNames }: Props) {
   if (role === "qm") {
     return (
       <div className="bg-white rounded-3xl p-8 text-center">
@@ -17,11 +17,13 @@ export default function RoleCard({ role, category, subject, fakeName }: Props) {
           <p className="text-xs text-blue-600 mb-1">범주: {category}</p>
           <p className="text-3xl font-black text-blue-700 tracking-tight">{subject}</p>
         </div>
-        <p className="text-sm text-gray-500 leading-relaxed mt-4">
-          가짜 예술가: <b className="text-ink">{fakeName}</b>
-          <br />
-          당신은 그림에 참여하지 않아요
-        </p>
+        {fakeNames && fakeNames.length > 0 && (
+          <p className="text-sm text-gray-500 leading-relaxed mt-4">
+            가짜 예술가: <b className="text-ink">{fakeNames.join(", ")}</b>
+            <br />
+            당신은 그림에 참여하지 않아요
+          </p>
+        )}
       </div>
     );
   }

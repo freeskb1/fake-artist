@@ -10,20 +10,20 @@ export type Player = {
   score: number;
   isHost?: boolean;
   connected?: boolean;
-  readyForNextRound?: boolean; // 결과 화면 다시 하기 ready 상태
+  readyForNextRound?: boolean;
 };
 
 export type GamePhase =
   | "lobby"
-  | "topic-setup"      // 출제자가 주제 입력/선택 중
+  | "topic-setup"
   | "role-reveal"
   | "drawing"
   | "voting"
-  | "voting-local"     // 단말1개 모드 전용: 안내 → 지목 → 추측 한 화면
+  | "voting-local"
   | "guess"
   | "result";
 
-export type GameMode = "select" | "free"; // 선택 모드 / 자유 모드
+export type GameMode = "free" | "select" | "auto";
 
 export type Point = { x: number; y: number };
 export type Stroke = {
@@ -32,9 +32,15 @@ export type Stroke = {
   points: Point[];
 };
 
+export type FakeGuess = {
+  fakeId: string;
+  guess: string;
+  correct: boolean;
+};
+
 export type RoundState = {
-  questionMasterId: string;
-  fakeArtistId: string;
+  questionMasterId: string | null;
+  fakeArtistIds: string[];
   category: string;
   subject: string;
   currentTurnPlayerId: string | null;
@@ -44,14 +50,15 @@ export type RoundState = {
   liveStroke: Stroke | null;
   rolesViewed: string[];
   votes: Record<string, string>;
-  accusedId: string | null;
-  fakeGuess: string;
-  outcome: "fake_hidden" | "fake_won" | "artists_won" | null;
+  accusedIds: string[];
+  currentGuessingFakeId: string | null;
+  fakeGuesses: FakeGuess[];
+  outcome: "fake_hidden" | "fake_won" | "artists_won" | "mixed" | null;
 };
 
 export type TopicCard = {
   cat: string;
-  icon: string;     // tabler icon name
+  icon: string;
   subjects: string[];
 };
 
@@ -60,11 +67,12 @@ export type RoomState = {
   hostId: string;
   phase: GamePhase;
   mode: GameMode;
+  twoFakes: boolean;
   players: Record<string, Player>;
   playerOrder: string[];
   round: RoundState | null;
-  qmRotationIndex: number; // 시계방향 순환 인덱스
-  roundCount: number; // 진행한 라운드 수 (점수 누적용)
+  qmRotationIndex: number;
+  roundCount: number;
   createdAt: number;
   updatedAt: number;
 };

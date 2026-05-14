@@ -1,22 +1,11 @@
 import {
-  ref,
-  set,
-  get,
-  update,
-  onValue,
-  remove,
-  onDisconnect,
-  runTransaction,
+  ref, set, get, update, onValue, remove,
+  onDisconnect, runTransaction,
 } from "firebase/database";
 import { getDb } from "./firebase";
 import {
-  Player,
-  RoomState,
-  RoundState,
-  Stroke,
-  GamePhase,
-  GameMode,
-  PlayerColor,
+  Player, RoomState, RoundState, Stroke, GamePhase,
+  GameMode, PlayerColor, FakeGuess,
 } from "@/types/game";
 import { COLORS } from "./colors";
 import { generateRoomCode, generatePlayerId } from "./gameLogic";
@@ -33,9 +22,6 @@ function roomChildRef(code: string, path: string) {
   return ref(db, `rooms/${code}/${path}`);
 }
 
-/**
- * 방 생성
- */
 export async function createRoom(hostName: string): Promise<{ code: string; playerId: string }> {
   const db = getDb();
   if (!db) throw new Error("Firebase not configured");
@@ -62,6 +48,7 @@ export async function createRoom(hostName: string): Promise<{ code: string; play
       hostId: playerId,
       phase: "lobby",
       mode: "select",
+      twoFakes: false,
       players: { [playerId]: host },
       playerOrder: [playerId],
       round: null,
@@ -74,32 +61,20 @@ export async function createRoom(hostName: string): Promise<{ code: string; play
     await set(roomRef(code), room);
     return { code, playerId };
   }
-
-  throw new Error("방 코드 생성 실패. 잠시 후 다시 시도하세요");
+  throw new Error("방 코드 생성 실패");
 }
 
-/**
- * 방 참여
- */
 export async function joinRoom(code: string, name: string): Promise<{ playerId: string }> {
   const db = getDb();
   if (!db) throw new Error("Firebase not configured");
-
   const snap = await get(roomRef(code));
-  if (!snap.exists()) {
-    throw new Error("방을 찾을 수 없어요. 코드를 확인해주세요");
-  }
+  if (!snap.exists()) throw new Error("방을 찾을 수 없어요");
   const room = snap.val() as RoomState;
-
-  if (room.phase !== "lobby") {
-    throw new Error("이미 게임이 진행 중입니다");
-  }
+  if (room.phase !== "lobby") throw new Error("이미 게임이 진행 중입니다");
 
   const existingPlayers = room.players || {};
   const playerCount = Object.keys(existingPlayers).length;
-  if (playerCount >= 10) {
-    throw new Error("방이 가득 찼습니다 (최대 10명)");
-  }
+  if (playerCount >= 10) throw new Error("방이 가득 찼습니다");
 
   const usedColors = new Set(Object.values(existingPlayers).map((p) => p.color.hex));
   const color = COLORS.find((c) => !usedColors.has(c.hex)) || COLORS[playerCount];
@@ -116,63 +91,41 @@ export async function joinRoom(code: string, name: string): Promise<{ playerId: 
   };
 
   const newOrder = [...(room.playerOrder || []), playerId];
-
   await update(roomRef(code), {
     [`players/${playerId}`]: player,
     playerOrder: newOrder,
     updatedAt: Date.now(),
   });
-
   return { playerId };
 }
 
-/**
- * 색상 변경 - transaction으로 충돌 방지
- */
 export async function changeColor(
-  code: string,
-  playerId: string,
-  newColor: PlayerColor
+  code: string, playerId: string, newColor: PlayerColor
 ): Promise<{ success: boolean; reason?: string }> {
   const db = getDb();
   if (!db) return { success: false, reason: "Firebase not configured" };
 
-  // transaction: 다른 사람이 이미 그 색이면 실패
   const playersRef = ref(db, `rooms/${code}/players`);
   const result = await runTransaction(playersRef, (currentPlayers: Record<string, Player> | null) => {
     if (!currentPlayers) return currentPlayers;
-
-    // 다른 사람이 newColor 사용 중인지 체크
     const conflict = Object.entries(currentPlayers).find(
       ([id, p]) => id !== playerId && p.color?.hex === newColor.hex
     );
-    if (conflict) {
-      // abort - 변경 안 함
-      return; // undefined return = abort
-    }
-
+    if (conflict) return;
     if (!currentPlayers[playerId]) return currentPlayers;
     currentPlayers[playerId] = { ...currentPlayers[playerId], color: newColor };
     return currentPlayers;
   });
 
-  if (!result.committed) {
-    return { success: false, reason: "이미 다른 사람이 사용 중인 색이에요" };
-  }
+  if (!result.committed) return { success: false, reason: "이미 사용 중인 색이에요" };
   return { success: true };
 }
 
-export function subscribeRoom(
-  code: string,
-  callback: (room: RoomState | null) => void
-): () => void {
+export function subscribeRoom(code: string, cb: (room: RoomState | null) => void): () => void {
   const r = roomRef(code);
   const unsub = onValue(r, (snap) => {
-    if (!snap.exists()) {
-      callback(null);
-      return;
-    }
-    callback(snap.val() as RoomState);
+    if (!snap.exists()) { cb(null); return; }
+    cb(snap.val() as RoomState);
   });
   return () => unsub();
 }
@@ -189,26 +142,21 @@ export async function leaveRoom(code: string, playerId: string): Promise<void> {
   const snap = await get(roomRef(code));
   if (!snap.exists()) return;
   const room = snap.val() as RoomState;
-
   const remainingIds = (room.playerOrder || []).filter((id) => id !== playerId);
-
   if (remainingIds.length === 0) {
     await remove(roomRef(code));
     return;
   }
-
   const updates: Record<string, unknown> = {
     [`players/${playerId}`]: null,
     playerOrder: remainingIds,
     updatedAt: Date.now(),
   };
-
   if (room.hostId === playerId) {
     const newHost = remainingIds[0];
     updates.hostId = newHost;
     updates[`players/${newHost}/isHost`] = true;
   }
-
   await update(roomRef(code), updates);
 }
 
@@ -220,17 +168,23 @@ export async function setMode(code: string, mode: GameMode) {
   await update(roomRef(code), { mode, updatedAt: Date.now() });
 }
 
-export async function startTopicSetup(code: string, qmId: string, nextRotationIndex: number) {
-  await update(roomRef(code), {
+export async function setTwoFakes(code: string, twoFakes: boolean) {
+  await update(roomRef(code), { twoFakes, updatedAt: Date.now() });
+}
+
+export async function startTopicSetup(code: string, qmId: string | null, nextRotationIndex: number) {
+  const updates: Record<string, unknown> = {
     phase: "topic-setup" as GamePhase,
     qmRotationIndex: nextRotationIndex,
-    "round/questionMasterId": qmId,
     updatedAt: Date.now(),
-  });
+  };
+  if (qmId) {
+    updates["round/questionMasterId"] = qmId;
+  }
+  await update(roomRef(code), updates);
 }
 
 export async function startRound(code: string, round: RoundState) {
-  // 모든 플레이어의 readyForNextRound 초기화
   const snap = await get(roomRef(code));
   if (!snap.exists()) return;
   const room = snap.val() as RoomState;
@@ -244,7 +198,6 @@ export async function startRound(code: string, round: RoundState) {
   Object.keys(room.players || {}).forEach((pid) => {
     updates[`players/${pid}/readyForNextRound`] = false;
   });
-
   await update(roomRef(code), updates);
 }
 
@@ -265,13 +218,22 @@ export async function castVote(code: string, voterId: string, accusedId: string)
   await set(roomChildRef(code, `round/votes/${voterId}`), accusedId);
 }
 
-export async function setGuess(code: string, guess: string) {
-  await set(roomChildRef(code, "round/fakeGuess"), guess);
+export async function addAccusedId(code: string, accusedId: string, currentAccused: string[]) {
+  if (currentAccused.includes(accusedId)) return;
+  await set(roomChildRef(code, "round/accusedIds"), [...currentAccused, accusedId]);
+}
+
+export async function setCurrentGuessingFake(code: string, fakeId: string | null) {
+  await set(roomChildRef(code, "round/currentGuessingFakeId"), fakeId);
+}
+
+export async function addFakeGuess(code: string, guess: FakeGuess, currentGuesses: FakeGuess[]) {
+  await set(roomChildRef(code, "round/fakeGuesses"), [...currentGuesses, guess]);
 }
 
 export async function finalizeOutcome(
   code: string,
-  outcome: "fake_hidden" | "fake_won" | "artists_won",
+  outcome: "fake_hidden" | "fake_won" | "artists_won" | "mixed",
   scoreDeltas: Record<string, number>,
   players: Record<string, Player>
 ) {
@@ -285,7 +247,6 @@ export async function finalizeOutcome(
       updates[`players/${pid}/score`] = (players[pid].score || 0) + delta;
     }
   });
-  // ready 상태도 초기화
   Object.keys(players).forEach((pid) => {
     updates[`players/${pid}/readyForNextRound`] = false;
   });
