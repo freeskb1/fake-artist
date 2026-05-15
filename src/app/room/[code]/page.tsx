@@ -552,21 +552,30 @@ function Drawing({ room, me, players, round, code, onExit }: {
           showEmptyHint={(round.strokes || []).length === 0}
         />
 
-        <div className="flex gap-1 mt-2 px-1 flex-wrap">
-          {drawers.map((p) => {
-            const count = (round.strokes || []).filter((s) => s.playerId === p.id).length;
-            const isActive = p.id === round.currentTurnPlayerId;
-            return (
-              <div key={p.id}
-                className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1.5 rounded-lg border ${isActive ? "text-white" : "bg-white text-gray-500 border-black/5"}`}
-                style={isActive ? { background: p.color.hex, borderColor: p.color.hex } : {}}>
-                <div className="w-2 h-2 rounded-full" style={{ background: p.color.hex }} />
-                <span className="text-[10px] font-medium truncate max-w-full px-1">{p.name}</span>
-                <span className="text-[10px] opacity-60">{count}/2</span>
-              </div>
-            );
-          })}
+        <div className="mt-2 -mx-1 px-1 overflow-x-auto">
+          <div className="flex gap-1.5 w-max">
+            {drawers.map((p, idx) => {
+              const count = (round.strokes || []).filter((s) => s.playerId === p.id).length;
+              const isActive = p.id === round.currentTurnPlayerId;
+              const isMe = p.id === me.id;
+              return (
+                <div key={p.id}
+                  className={`flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-lg border min-w-[58px] ${isActive ? "text-white" : "bg-white text-gray-500 border-black/5"}`}
+                  style={isActive ? { background: p.color.hex, borderColor: p.color.hex } : {}}>
+                  <div className="flex items-center gap-1">
+                    <span className={`text-[9px] ${isActive ? "text-white/70" : "text-gray-400"}`}>{idx + 1}</span>
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ background: p.color.hex }} />
+                  </div>
+                  <span className="text-[10px] font-medium truncate max-w-[52px]">
+                    {p.name}{isMe ? " (나)" : ""}
+                  </span>
+                  <span className="text-[10px] opacity-60">{count}/2획</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
+        <p className="text-center text-[10px] text-gray-400 mt-1">← 좌우로 넘겨 전체 순서 확인</p>
 
         {isQM && <p className="text-center text-xs text-gray-400 mt-2">당신은 출제자라 그림에 참여하지 않아요</p>}
       </div>
@@ -744,13 +753,17 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
   const winner = players.find((p) => p.score >= WIN_SCORE);
   const matchEnded = !!winner;
 
-  // 다음 라운드 시작 권한자: free/select 모드는 다음 출제자, auto 모드는 호스트
+  // 다음 라운드 시작 권한: 모든 모드에서 방장 고정
+  const canStartNext = isHost;
+  // 다음 출제자 (자유/선택 모드 표시용)
   const nextQMId = predictNextQM(players, room.qmRotationIndex || 0, room.mode);
-  const canStartNext = room.mode === "auto" ? isHost : (nextQMId === me.id);
 
   const myReady = me.readyForNextRound || false;
-  const readyCount = players.filter((p) => p.readyForNextRound).length;
-  const allReady = readyCount === players.length;
+  // 방장은 준비 대상에서 제외 (시작 버튼을 누르는 역할)
+  const nonHostPlayers = players.filter((p) => !p.isHost);
+  const readyCount = nonHostPlayers.filter((p) => p.readyForNextRound).length;
+  const allReady = readyCount === nonHostPlayers.length;
+  const [starting, setStarting] = useState(false);
 
   const outcomeStyle = {
     fake_hidden: { bg: "bg-pink-50", text: "text-pink-700", title: "가짜팀 승리", sub: "예술가들이 가짜를 못 찾았어요" },
@@ -765,9 +778,22 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
   }
 
   async function handleNextRound() {
-    if (!canStartNext) return;
-    if (!allReady) { alert("모든 플레이어가 준비되어야 시작할 수 있어요"); return; }
-    await resetForNextRound(code);
+    if (!canStartNext || !allReady || starting) return;
+    setStarting(true);
+    try {
+      if (room.mode === "auto") {
+        // 빠른 모드: 새 주제 뽑아 라운드 즉시 생성
+        const { cat, subject } = pickRandomTopic();
+        const newRound = createRound(players, room.mode, room.twoFakes, null, cat, subject);
+        await resetForNextRound(code, { mode: "auto", round: newRound });
+      } else {
+        // 자유/선택 모드: 다음 출제자 지정 후 topic-setup
+        const { qmId, nextRotationIndex } = nextQuestionMaster(players, room.qmRotationIndex || 0);
+        await resetForNextRound(code, { mode: room.mode, qmId, nextRotationIndex });
+      }
+    } finally {
+      setStarting(false);
+    }
   }
 
   async function handleResetScores() {
@@ -842,60 +868,54 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
           <>
             <div className="bg-white rounded-2xl p-4 mb-3 border border-black/5">
               <p className="text-xs text-gray-500 mb-2 font-semibold">
-                다시 하기 준비 ({readyCount}/{players.length})
+                다시 하기 준비 ({readyCount}/{nonHostPlayers.length})
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {players.map((p) => (
-                  <div key={p.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs ${p.readyForNextRound ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-600"}`}>
-                    <span className="w-2 h-2 rounded-full" style={{ background: p.color.hex }} />
-                    {p.name}{p.readyForNextRound && " ✓"}
-                  </div>
-                ))}
+                {players.map((p) => {
+                  if (p.isHost) {
+                    return (
+                      <div key={p.id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-ink/10 text-ink">
+                        <span className="w-2 h-2 rounded-full" style={{ background: p.color.hex }} />
+                        {p.name} · 방장
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={p.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs ${p.readyForNextRound ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-600"}`}>
+                      <span className="w-2 h-2 rounded-full" style={{ background: p.color.hex }} />
+                      {p.name}{p.readyForNextRound && " ✓"}
+                    </div>
+                  );
+                })}
               </div>
+              {room.mode !== "auto" && nextQMId && (
+                <p className="text-xs text-gray-500 mt-3">
+                  다음 출제자: <b>{players.find((p) => p.id === nextQMId)?.name}</b>
+                </p>
+              )}
             </div>
 
             {canStartNext ? (
-              <>
-                {/* 다음 판 출제자 (또는 호스트) 본인은 "다음 판 시작" 한 버튼 */}
-                <button
-                  onClick={async () => {
-                    if (!myReady) await markReadyForNextRound(code, me.id, true);
-                    if (allReady || readyCount === players.length - 1) {
-                      // 본인이 ready 했고 모두 준비됐으면 시작
-                      setTimeout(handleNextRound, 100);
-                    }
-                  }}
-                  disabled={allReady ? false : !myReady && readyCount < players.length - 1}
-                  className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base mb-2 disabled:opacity-30"
-                >
-                  {allReady ? "다음 판 시작" :
-                   !myReady ? `다음 판 시작 (${readyCount}/${players.length})` :
-                   `대기 중 (${readyCount}/${players.length})`}
-                </button>
-                {room.mode !== "auto" && (
-                  <p className="text-xs text-center text-gray-500 mb-2">
-                    다음 출제자는 <b>{me.name}(나)</b>입니다
-                  </p>
-                )}
-              </>
+              <button
+                onClick={handleNextRound}
+                disabled={!allReady || starting}
+                className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base mb-2 disabled:opacity-30"
+              >
+                {starting ? "시작 중..."
+                  : allReady ? "다음 판 시작"
+                  : `다른 플레이어 준비 대기 중 (${readyCount}/${nonHostPlayers.length})`}
+              </button>
             ) : (
               <>
                 <button
                   onClick={handleToggleReady}
                   className={`w-full rounded-2xl py-4 font-bold text-base mb-2 ${myReady ? "bg-green-500 text-white" : "bg-white border border-black/10 text-ink"}`}
                 >
-                  {myReady ? `✓ 준비 완료 (${readyCount}/${players.length})` : `다시 하기 (${readyCount}/${players.length})`}
+                  {myReady ? `✓ 준비 완료 (${readyCount}/${nonHostPlayers.length})` : `다시 하기 (${readyCount}/${nonHostPlayers.length})`}
                 </button>
-                {room.mode !== "auto" && nextQMId && (
-                  <p className="text-xs text-center text-gray-500 mb-2">
-                    다음 출제자: <b>{players.find((p) => p.id === nextQMId)?.name}</b>
-                  </p>
-                )}
-                {room.mode === "auto" && !isHost && (
-                  <p className="text-xs text-center text-gray-500 mb-2">
-                    호스트가 다음 판을 시작합니다
-                  </p>
-                )}
+                <p className="text-xs text-center text-gray-500 mb-2">
+                  모두 준비되면 방장이 다음 판을 시작합니다
+                </p>
               </>
             )}
           </>

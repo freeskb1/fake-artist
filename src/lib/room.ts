@@ -257,12 +257,61 @@ export async function markReadyForNextRound(code: string, playerId: string, read
   await set(roomChildRef(code, `players/${playerId}/readyForNextRound`), ready);
 }
 
-export async function resetForNextRound(code: string) {
-  await update(roomRef(code), {
-    round: null,
-    phase: "lobby" as GamePhase,
-    updatedAt: Date.now(),
-  });
+/**
+ * 리게임: 대기실로 후퇴하지 않고 모드별로 바로 다음 라운드 흐름 진입
+ * - 빠른 모드(auto): 새 라운드 즉시 생성 → role-reveal
+ * - 자유/선택 모드: 다음 출제자 지정 → topic-setup
+ * 점수·출제자 순환 인덱스는 유지된다.
+ */
+export async function resetForNextRound(
+  code: string,
+  opts:
+    | { mode: "auto"; round: RoundState }
+    | { mode: "free" | "select"; qmId: string; nextRotationIndex: number }
+) {
+  const snap = await get(roomRef(code));
+  if (!snap.exists()) return;
+  const room = snap.val() as RoomState;
+
+  if (opts.mode === "auto") {
+    const updates: Record<string, unknown> = {
+      round: opts.round,
+      phase: "role-reveal" as GamePhase,
+      roundCount: (room.roundCount || 0) + 1,
+      updatedAt: Date.now(),
+    };
+    Object.keys(room.players || {}).forEach((pid) => {
+      updates[`players/${pid}/readyForNextRound`] = false;
+    });
+    await update(roomRef(code), updates);
+  } else {
+    const updates: Record<string, unknown> = {
+      round: {
+        questionMasterId: opts.qmId,
+        fakeArtistIds: [],
+        category: "",
+        subject: "",
+        currentTurnPlayerId: null,
+        turnIndex: 0,
+        maxTurns: 0,
+        strokes: [],
+        liveStroke: null,
+        rolesViewed: [],
+        votes: {},
+        accusedIds: [],
+        currentGuessingFakeId: null,
+        fakeGuesses: [],
+        outcome: null,
+      },
+      phase: "topic-setup" as GamePhase,
+      qmRotationIndex: opts.nextRotationIndex,
+      updatedAt: Date.now(),
+    };
+    Object.keys(room.players || {}).forEach((pid) => {
+      updates[`players/${pid}/readyForNextRound`] = false;
+    });
+    await update(roomRef(code), updates);
+  }
 }
 
 export async function resetScores(code: string, players: Record<string, Player>) {

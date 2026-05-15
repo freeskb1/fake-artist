@@ -507,21 +507,27 @@ function Drawing({
         showEmptyHint={round.strokes.length === 0}
       />
 
-      <div className="flex gap-1 mt-2 px-1 flex-wrap">
-        {drawers.map((p) => {
-          const count = round.strokes.filter((s) => s.playerId === p.id).length;
-          const isActive = p.id === round.currentTurnPlayerId;
-          return (
-            <div key={p.id}
-              className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1.5 rounded-lg border ${isActive ? "text-white" : "bg-white text-gray-500 border-black/5"}`}
-              style={isActive ? { background: p.color.hex, borderColor: p.color.hex } : {}}>
-              <div className="w-2 h-2 rounded-full" style={{ background: p.color.hex }} />
-              <span className="text-[10px] font-medium truncate max-w-full px-1">{p.name}</span>
-              <span className="text-[10px] opacity-60">{count}/2</span>
-            </div>
-          );
-        })}
+      <div className="mt-2 -mx-1 px-1 overflow-x-auto">
+        <div className="flex gap-1.5 w-max">
+          {drawers.map((p, idx) => {
+            const count = round.strokes.filter((s) => s.playerId === p.id).length;
+            const isActive = p.id === round.currentTurnPlayerId;
+            return (
+              <div key={p.id}
+                className={`flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-lg border min-w-[58px] ${isActive ? "text-white" : "bg-white text-gray-500 border-black/5"}`}
+                style={isActive ? { background: p.color.hex, borderColor: p.color.hex } : {}}>
+                <div className="flex items-center gap-1">
+                  <span className={`text-[9px] ${isActive ? "text-white/70" : "text-gray-400"}`}>{idx + 1}</span>
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ background: p.color.hex }} />
+                </div>
+                <span className="text-[10px] font-medium truncate max-w-[52px]">{p.name}</span>
+                <span className="text-[10px] opacity-60">{count}/2획</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
+      <p className="text-center text-[10px] text-gray-400 mt-1">← 좌우로 넘겨 전체 순서 확인</p>
     </div>
   );
 }
