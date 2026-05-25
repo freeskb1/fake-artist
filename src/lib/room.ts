@@ -209,26 +209,50 @@ export async function updateRound(code: string, updates: Partial<RoundState>) {
   await update(roomChildRef(code, "round"), updates);
 }
 
-export async function markRoleViewed(code: string, playerId: string, viewed: string[]) {
-  const newViewed = viewed.includes(playerId) ? viewed : [...viewed, playerId];
-  await update(roomChildRef(code, "round"), { rolesViewed: newViewed });
+/**
+ * 역할 확인 표시 - transaction으로 race condition 방지
+ * 여러 클라이언트가 동시에 호출해도 안전하게 누적됨
+ */
+export async function markRoleViewed(code: string, playerId: string, _viewed: string[]) {
+  const db = getDb();
+  if (!db) return;
+  const ref_ = ref(db, `rooms/${code}/round/rolesViewed`);
+  await runTransaction(ref_, (current: string[] | null) => {
+    const list = current || [];
+    if (list.includes(playerId)) return list;
+    return [...list, playerId];
+  });
 }
 
 export async function castVote(code: string, voterId: string, accusedId: string) {
   await set(roomChildRef(code, `round/votes/${voterId}`), accusedId);
 }
 
-export async function addAccusedId(code: string, accusedId: string, currentAccused: string[]) {
-  if (currentAccused.includes(accusedId)) return;
-  await set(roomChildRef(code, "round/accusedIds"), [...currentAccused, accusedId]);
+export async function addAccusedId(code: string, accusedId: string, _currentAccused: string[]) {
+  const db = getDb();
+  if (!db) return;
+  const ref_ = ref(db, `rooms/${code}/round/accusedIds`);
+  await runTransaction(ref_, (current: string[] | null) => {
+    const list = current || [];
+    if (list.includes(accusedId)) return list;
+    return [...list, accusedId];
+  });
 }
 
 export async function setCurrentGuessingFake(code: string, fakeId: string | null) {
   await set(roomChildRef(code, "round/currentGuessingFakeId"), fakeId);
 }
 
-export async function addFakeGuess(code: string, guess: FakeGuess, currentGuesses: FakeGuess[]) {
-  await set(roomChildRef(code, "round/fakeGuesses"), [...currentGuesses, guess]);
+export async function addFakeGuess(code: string, guess: FakeGuess, _currentGuesses: FakeGuess[]) {
+  const db = getDb();
+  if (!db) return;
+  const ref_ = ref(db, `rooms/${code}/round/fakeGuesses`);
+  await runTransaction(ref_, (current: FakeGuess[] | null) => {
+    const list = current || [];
+    // 같은 가짜의 추측이 이미 들어있다면 무시
+    if (list.some((g) => g.fakeId === guess.fakeId)) return list;
+    return [...list, guess];
+  });
 }
 
 export async function finalizeOutcome(
