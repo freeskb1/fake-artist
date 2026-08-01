@@ -14,8 +14,9 @@ export default function RoleCard({ role, category, subject, fakeNames }: Props) 
         <p className="text-xs text-gray-500 mb-2">당신은</p>
         <p className="text-3xl font-black tracking-tight mb-4">출제자</p>
         <div className="bg-blue-50 rounded-2xl p-4 mb-2">
-          <p className="text-xs text-blue-600 mb-1">범주: {category}</p>
-          <p className="text-3xl font-black text-blue-700 tracking-tight">{subject}</p>
+          <p className="text-2xl font-black text-blue-700 tracking-tight mb-2">{category}</p>
+          <div className="h-px bg-blue-200 my-2" />
+          <p className="text-3xl font-black text-blue-900 tracking-tight">{subject}</p>
         </div>
         {fakeNames && fakeNames.length > 0 && (
           <p className="text-sm text-gray-500 leading-relaxed mt-4">
@@ -35,8 +36,8 @@ export default function RoleCard({ role, category, subject, fakeNames }: Props) 
           <p className="text-3xl font-black tracking-tight">가짜 예술가</p>
         </div>
         <div className="bg-amber-50 rounded-2xl p-4">
-          <p className="text-xs text-amber-700 mb-1">범주만 알아요</p>
-          <p className="text-2xl font-black text-amber-800">{category}</p>
+          <p className="text-xs text-amber-700 mb-2">범주만 알아요</p>
+          <p className="text-3xl font-black text-amber-800 tracking-tight">{category}</p>
         </div>
         <p className="text-sm text-gray-500 leading-relaxed mt-4">
           주제는 모르는 상태에서 분위기에 맞춰 그리세요
@@ -51,12 +52,24 @@ export default function RoleCard({ role, category, subject, fakeNames }: Props) 
       <p className="text-xs text-gray-500 mb-2">당신은</p>
       <p className="text-3xl font-black tracking-tight mb-4">예술가</p>
       <div className="bg-blue-50 rounded-2xl p-4">
-        <p className="text-xs text-blue-600 mb-1">범주: {category}</p>
-        <p className="text-3xl font-black text-blue-700 tracking-tight">{subject}</p>
+        <p className="text-2xl font-black text-blue-700 tracking-tight mb-2">{category}</p>
+        <div className="h-px bg-blue-200 my-2" />
+        <p className="text-3xl font-black text-blue-900 tracking-tight">{subject}</p>
       </div>
-      <p className="text-sm text-gray-500 leading-relaxed mt-4">
-        주제에 맞게 그리되, 가짜에게 너무 명확한 힌트는 금물!
-      </p>
+      <div className="mt-4 text-left space-y-2 text-sm text-gray-600 bg-gray-50 rounded-2xl p-4">
+        <div className="flex gap-2">
+          <span className="text-gray-400 font-bold">1.</span>
+          <span>한 획만 그릴 수 있어요 (한 라운드 2번)</span>
+        </div>
+        <div className="flex gap-2">
+          <span className="text-gray-400 font-bold">2.</span>
+          <span>너무 명확히 그리면 가짜가 정답을 맞춰 가짜팀이 승리해요</span>
+        </div>
+        <div className="flex gap-2">
+          <span className="text-gray-400 font-bold">3.</span>
+          <span>가짜에게 힌트를 주지 않되, 예술가끼리는 서로 오해 안 받게</span>
+        </div>
+      </div>
     </div>
   );
 }

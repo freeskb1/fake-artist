@@ -224,8 +224,8 @@ export async function markRoleViewed(code: string, playerId: string, _viewed: st
   });
 }
 
-export async function castVote(code: string, voterId: string, accusedId: string) {
-  await set(roomChildRef(code, `round/votes/${voterId}`), accusedId);
+export async function castVote(code: string, voterId: string, accusedIds: string[]) {
+  await set(roomChildRef(code, `round/votes/${voterId}`), accusedIds);
 }
 
 export async function addAccusedId(code: string, accusedId: string, _currentAccused: string[]) {
@@ -372,4 +372,66 @@ export async function returnToLobby(code: string, players: Record<string, Player
 
 export async function setPlayerName(code: string, playerId: string, name: string) {
   await set(roomChildRef(code, `players/${playerId}/name`), name);
+}
+
+/**
+ * 방장 자동 이전 - 방장이 튕겼을 때 호출
+ * 온라인 플레이어 중 랜덤 선택. 온라인 없으면 무시.
+ * transaction으로 안전 처리 (여러 클라이언트 동시 호출 방지)
+ */
+export async function transferHostIfOffline(code: string): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  await runTransaction(ref(db, `rooms/${code}`), (room: RoomState | null) => {
+    if (!room) return room;
+    const currentHost = room.players?.[room.hostId];
+    if (currentHost && currentHost.connected !== false) return; // 방장 살아있음
+    // 방장 튕김 - 온라인 플레이어 중 랜덤 선택
+    const onlineIds = Object.entries(room.players || {})
+      .filter(([id, p]) => id !== room.hostId && p.connected !== false)
+      .map(([id]) => id);
+    if (onlineIds.length === 0) return; // 이전할 사람 없음
+    const newHostId = onlineIds[Math.floor(Math.random() * onlineIds.length)];
+    // 기존 방장 isHost=false
+    if (room.players[room.hostId]) {
+      room.players[room.hostId] = { ...room.players[room.hostId], isHost: false };
+    }
+    // 새 방장 isHost=true
+    room.players[newHostId] = { ...room.players[newHostId], isHost: true };
+    room.hostId = newHostId;
+    room.updatedAt = Date.now();
+    return room;
+  });
+}
+
+/**
+ * 현재 차례의 플레이어를 강제 스킵 (그림 그리기 단계)
+ * 방장이 사용. 현재 그림 그릴 사람이 오프라인일 때 다음 사람으로.
+ */
+export async function skipCurrentTurn(
+  code: string,
+  drawOrder: string[],
+  currentTurnPlayerId: string,
+  currentTurnIndex: number,
+  maxTurns: number
+): Promise<void> {
+  const idx = drawOrder.indexOf(currentTurnPlayerId);
+  const nextIdx = idx >= 0 ? (idx + 1) % drawOrder.length : 0;
+  const nextTurnPlayerId = drawOrder[nextIdx];
+  const newTurnIndex = currentTurnIndex + 1;
+  if (newTurnIndex >= maxTurns) {
+    // 그리기 끝 → voting
+    await update(roomChildRef(code, "round"), {
+      currentTurnPlayerId: null,
+      turnIndex: newTurnIndex,
+      liveStroke: null,
+    });
+    await updateRoomPhase(code, "voting");
+  } else {
+    await update(roomChildRef(code, "round"), {
+      currentTurnPlayerId: nextTurnPlayerId,
+      turnIndex: newTurnIndex,
+      liveStroke: null,
+    });
+  }
 }

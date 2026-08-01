@@ -49,7 +49,7 @@ export type RoundState = {
   strokes: Stroke[];
   liveStroke: Stroke | null;
   rolesViewed: string[];
-  votes: Record<string, string>;
+  votes: Record<string, string[]>;
   accusedIds: string[];
   currentGuessingFakeId: string | null;
   fakeGuesses: FakeGuess[];

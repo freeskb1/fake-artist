@@ -13,6 +13,7 @@ import {
   updateRound, markRoleViewed, castVote, addAccusedId,
   setCurrentGuessingFake, addFakeGuess,
   finalizeOutcome, resetForNextRound, resetScores, returnToLobby,
+  transferHostIfOffline, skipCurrentTurn,
   setMode as fbSetMode, setTwoFakes as fbSetTwoFakes,
   changeColor, markReadyForNextRound,
   setPlayerName as fbSetPlayerName, updateRoomPhase,
@@ -65,14 +66,47 @@ export default function RoomPage() {
   useEffect(() => {
     if (myPlayerId && code && room?.players?.[myPlayerId]) {
       setupPresence(code, myPlayerId);
+      // 최근 방 정보 저장
+      localStorage.setItem("recentRoom", JSON.stringify({
+        code,
+        playerId: myPlayerId,
+        playerName: room.players[myPlayerId].name,
+        savedAt: Date.now(),
+      }));
     }
   }, [myPlayerId, code, room]);
+
+  // 방장 튕김 감지 → 자동 이전
+  useEffect(() => {
+    if (!room || !myPlayerId) return;
+    const host = room.players?.[room.hostId];
+    if (!host || host.connected !== false) return;
+    // 나만 실행 조건: playerOrder에서 가장 앞선 온라인 사용자만
+    const onlinePlayers = (room.playerOrder || [])
+      .map((id) => room.players[id])
+      .filter((p) => p && p.id !== room.hostId && p.connected !== false);
+    if (onlinePlayers.length === 0) return;
+    if (onlinePlayers[0].id !== myPlayerId) return;
+    // 3초 뒤에도 방장이 여전히 오프라인이면 이전 시도
+    const timer = setTimeout(() => {
+      transferHostIfOffline(code).catch(() => {});
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [room, myPlayerId, code]);
 
   async function handleExit() {
     setShowExitConfirm(false);
     if (myPlayerId) {
       await leaveRoom(code, myPlayerId);
       localStorage.removeItem(`room_${code}_playerId`);
+      // 최근 방 정보도 지움 (재입장 유도 안 함)
+      try {
+        const raw = localStorage.getItem("recentRoom");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.code === code) localStorage.removeItem("recentRoom");
+        }
+      } catch {}
     }
     router.push("/");
   }
@@ -551,9 +585,24 @@ function Drawing({ room, me, players, round, code, onExit }: {
         </div>
 
         <div className="flex items-center justify-between px-4 py-3 rounded-2xl mb-2 text-white font-bold" style={{ background: currentPlayer.color.hex }}>
-          <span>{isMyTurn ? "내 차례" : `${currentPlayer.name} 차례`}</span>
+          <span>
+            {isMyTurn ? "내 차례" : `${currentPlayer.name} 차례`}
+            {currentPlayer.connected === false && <span className="ml-2 text-xs opacity-85">· 오프라인</span>}
+          </span>
           <span className="text-sm opacity-85 font-medium">{round.turnIndex + 1} / {round.maxTurns}획</span>
         </div>
+
+        {room.hostId === me.id && currentPlayer.connected === false && (
+          <button
+            onClick={async () => {
+              if (!confirm(`${currentPlayer.name}이(가) 오프라인입니다. 차례를 스킵할까요?`)) return;
+              await skipCurrentTurn(code, round.drawOrder || [], round.currentTurnPlayerId!, round.turnIndex, round.maxTurns);
+            }}
+            className="w-full bg-orange-500 text-white rounded-xl py-2.5 mb-2 font-bold text-sm"
+          >
+            ⚠️ {currentPlayer.name} 차례 스킵
+          </button>
+        )}
 
         <DrawingCanvas
           strokes={round.strokes || []}
@@ -601,31 +650,74 @@ function Voting({ room, me, players, round, code, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState; code: string; onExit: () => void;
 }) {
   const isQM = me.id === round.questionMasterId;
-  const myVote = round.votes?.[me.id];
-  const votes = round.votes || {};
+  const isHost = room.hostId === me.id;
+  const targetCount = room.twoFakes ? 2 : 1;
+  const votes = (round.votes || {}) as Record<string, string[] | string>;
+  // 하위 호환: 문자열이면 배열로
+  const myVoteRaw = votes[me.id];
+  const myVotes: string[] = Array.isArray(myVoteRaw) ? myVoteRaw : (myVoteRaw ? [myVoteRaw] : []);
+
   const voters = players.filter((p) => p.id !== round.questionMasterId);
-  const allVoted = voters.every((p) => votes[p.id]);
+  const activeVoters = voters.filter((p) => p.connected !== false);
+  const offlineVoters = voters.filter((p) => p.connected === false);
+  const votedIds = Object.keys(votes).filter((id) => {
+    const v = votes[id];
+    const arr = Array.isArray(v) ? v : (v ? [v] : []);
+    return arr.length === targetCount;
+  });
+  const allActiveVoted = activeVoters.every((p) => votedIds.includes(p.id));
+
   const tallyingRef = useRef(false);
   const isFirstVoter = voters[0]?.id === me.id;
 
   useEffect(() => {
-    if (!allVoted || tallyingRef.current || !isFirstVoter) return;
+    if (!allActiveVoted || tallyingRef.current || !isFirstVoter) return;
+    // 튕긴 사람이 있어도 방장이 스킵했거나 모두 온라인이면 진행
+    if (offlineVoters.length > 0) return; // 방장이 명시적으로 스킵해야
     tallyingRef.current = true;
-    (async () => {
-      const { accusedId, tied } = tallyVotes(votes);
-      if (accusedId && round.fakeArtistIds.includes(accusedId) && !tied) {
-        // 가짜 잡힘 → guess phase로
-        await updateRound(code, { accusedIds: [accusedId], currentGuessingFakeId: accusedId });
-        await updateRoomPhase(code, "guess");
-      } else {
-        // 가짜 못 잡힘 → 바로 결과
-        const noAccusedRound = { ...round, accusedIds: accusedId ? [accusedId] : [], fakeGuesses: [] };
-        const { deltas, outcome } = calculateScores(noAccusedRound, players);
-        await updateRound(code, { accusedIds: noAccusedRound.accusedIds });
-        await finalizeOutcome(code, outcome, deltas, room.players);
-      }
-    })();
-  }, [allVoted, isFirstVoter, votes, round, code, players, room.players]);
+    finalize(false);
+  }, [allActiveVoted, isFirstVoter, offlineVoters.length]);
+
+  async function finalize(_skipped: boolean) {
+    const { accusedIds, tied } = tallyVotes(votes, targetCount);
+    const accusedFakes = accusedIds.filter((id) => round.fakeArtistIds.includes(id));
+    // 최소 1명의 가짜라도 잡혔다면 → guess 단계
+    if (accusedFakes.length > 0 && !tied) {
+      await updateRound(code, {
+        accusedIds,
+        currentGuessingFakeId: accusedFakes[0], // 하위 호환용 (첫 가짜)
+      });
+      await updateRoomPhase(code, "guess");
+    } else {
+      // 아무 가짜도 못 잡음 → 바로 결과
+      const noAccusedRound = { ...round, accusedIds, fakeGuesses: [] };
+      const { deltas, outcome } = calculateScores(noAccusedRound, players);
+      await updateRound(code, { accusedIds });
+      await finalizeOutcome(code, outcome, deltas, room.players);
+    }
+  }
+
+  function toggleVote(pid: string) {
+    if (isQM) return;
+    let newVotes: string[];
+    if (myVotes.includes(pid)) {
+      newVotes = myVotes.filter((id) => id !== pid);
+    } else if (myVotes.length < targetCount) {
+      newVotes = [...myVotes, pid];
+    } else {
+      // 이미 targetCount 만큼 골랐고 새 사람 클릭 → 첫 번째 빼고 이 사람 추가
+      newVotes = [...myVotes.slice(1), pid];
+    }
+    castVote(code, me.id, newVotes);
+  }
+
+  async function handleSkip() {
+    if (!isHost || offlineVoters.length === 0) return;
+    if (!confirm(`오프라인인 ${offlineVoters.map(p => p.name).join(", ")}의 표를 무시하고 결과를 집계할까요?`)) return;
+    if (tallyingRef.current) return;
+    tallyingRef.current = true;
+    await finalize(true);
+  }
 
   return (
     <main className="min-h-dvh flex flex-col px-4 max-w-md mx-auto safe-top safe-bottom">
@@ -639,8 +731,9 @@ function Voting({ room, me, players, round, code, onExit }: {
         </div>
         <h2 className="text-xl font-bold mb-1">가짜 예술가 지목</h2>
         <p className="text-sm text-gray-500 mb-4">
-          {isQM ? "출제자는 투표하지 않아요" : "누가 가짜라고 생각하나요?"}
-          {round.fakeArtistIds.length === 2 && !isQM && <><br/>가짜가 2명이지만 한 번에 1명만 지목됩니다.</>}
+          {isQM ? "출제자는 투표하지 않아요"
+            : room.twoFakes ? `가짜 2명을 지목해주세요 (${myVotes.length}/2)`
+            : "누가 가짜라고 생각하나요?"}
         </p>
 
         <ResultCanvas strokes={round.strokes || []} className="mb-4" />
@@ -648,34 +741,59 @@ function Voting({ room, me, players, round, code, onExit }: {
         {!isQM && (
           <div className="space-y-1.5 mb-4">
             {players.filter((p) => p.id !== me.id && p.id !== round.questionMasterId).map((p) => {
-              const selected = myVote === p.id;
+              const selected = myVotes.includes(p.id);
+              const selectedIdx = myVotes.indexOf(p.id);
               return (
-                <button key={p.id} onClick={() => castVote(code, me.id, p.id)}
+                <button key={p.id} onClick={() => toggleVote(p.id)}
                   className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl bg-white border-2 font-semibold text-base ${selected ? "border-ink" : "border-transparent"}`}>
                   <div className="w-6 h-6 rounded-full" style={{ background: p.color.hex }} />
                   <span>{p.name}</span>
-                  {selected && <span className="ml-auto text-xl">✓</span>}
+                  {p.connected === false && <span className="text-[10px] text-gray-400 ml-auto">오프라인</span>}
+                  {selected && (
+                    <span className={`${p.connected === false ? "" : "ml-auto"} text-sm font-bold text-ink`}>
+                      {room.twoFakes ? `#${selectedIdx + 1}` : "✓"}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
         )}
 
-        <div className="bg-white rounded-2xl p-3 border border-black/5">
+        <div className="bg-white rounded-2xl p-3 border border-black/5 mb-3">
           <p className="text-xs text-gray-500 mb-2 font-semibold">투표 현황</p>
           <div className="flex flex-wrap gap-1.5">
             {voters.map((p) => {
-              const voted = !!votes[p.id];
+              const voted = votedIds.includes(p.id);
+              const isOffline = p.connected === false;
               return (
-                <div key={p.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs ${voted ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-600"}`}>
+                <div key={p.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs ${
+                  isOffline ? "bg-orange-50 text-orange-700"
+                    : voted ? "bg-green-50 text-green-700"
+                    : "bg-gray-100 text-gray-600"
+                }`}>
                   <span className="w-2 h-2 rounded-full" style={{ background: p.color.hex }} />
-                  {p.name}{voted && " ✓"}
+                  {p.name}
+                  {voted && " ✓"}
+                  {isOffline && " ⚠️"}
                 </div>
               );
             })}
           </div>
         </div>
-        {allVoted && <div className="mt-4 bg-gray-100 rounded-2xl py-4 text-center text-sm text-gray-500"><span className="pulse-dot">●</span> 결과 집계 중...</div>}
+
+        {isHost && offlineVoters.length > 0 && allActiveVoted && (
+          <button onClick={handleSkip}
+            className="w-full bg-orange-500 text-white rounded-2xl py-3 font-bold text-sm mb-2">
+            오프라인 {offlineVoters.length}명 스킵하고 결과 집계
+          </button>
+        )}
+
+        {allActiveVoted && offlineVoters.length === 0 && (
+          <div className="bg-gray-100 rounded-2xl py-4 text-center text-sm text-gray-500">
+            <span className="pulse-dot">●</span> 결과 집계 중...
+          </div>
+        )}
       </div>
     </main>
   );
@@ -684,28 +802,46 @@ function Voting({ room, me, players, round, code, onExit }: {
 function Guess({ room, me, players, round, code, onExit }: {
   room: RoomState; me: Player; players: Player[]; round: RoundState; code: string; onExit: () => void;
 }) {
-  const guessingFakeId = round.currentGuessingFakeId;
-  const fake = guessingFakeId ? players.find((p) => p.id === guessingFakeId) : null;
-  const isMyTurn = me.id === guessingFakeId;
+  // 잡힌 가짜들 (accusedIds 중 실제 가짜인 사람들)
+  const accusedFakeIds = round.accusedIds.filter((id) => round.fakeArtistIds.includes(id));
+  const accusedFakes = accusedFakeIds.map((id) => players.find((p) => p.id === id)!).filter(Boolean);
+  const isMeAccusedFake = accusedFakeIds.includes(me.id);
+  const guesses = round.fakeGuesses || [];
+  const alreadyGuessedIds = guesses.map((g) => g.fakeId);
+  const iAlreadyGuessed = alreadyGuessedIds.includes(me.id);
+  const allGuessed = accusedFakeIds.every((id) => alreadyGuessedIds.includes(id));
+
   const [guess, setLocalGuess] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const finalizingRef = useRef(false);
+
+  // 마지막 입력자가 결과 화면으로 전환
+  useEffect(() => {
+    if (!allGuessed || finalizingRef.current) return;
+    // 가짜 중 alphabet 순 첫 번째만 실행
+    const trigger = [...accusedFakeIds].sort()[0];
+    if (me.id !== trigger && !me.isHost) return;
+    // 방장 또는 첫 가짜가 트리거
+    finalizingRef.current = true;
+    (async () => {
+      const { deltas, outcome } = calculateScores(round, players);
+      await finalizeOutcome(code, outcome, deltas, room.players);
+    })();
+  }, [allGuessed, accusedFakeIds, me.id, me.isHost]);
 
   async function submit() {
-    if (!isMyTurn || !fake) return;
+    if (!isMeAccusedFake || iAlreadyGuessed || submitting) return;
     setSubmitting(true);
-    const correct = guess.trim() === round.subject;
-    const newGuess: FakeGuess = { fakeId: fake.id, guess, correct };
-    const newGuesses = [...(round.fakeGuesses || []), newGuess];
-    await addFakeGuess(code, newGuess, round.fakeGuesses || []);
-
-    // 다음 가짜 추측이 남았나? (현재 룰: 한 번에 1명만 지목하니까, 추가 가짜 추측 없음)
-    // 결과 계산
-    const finalRound = { ...round, fakeGuesses: newGuesses };
-    const { deltas, outcome } = calculateScores(finalRound, players);
-    await finalizeOutcome(code, outcome, deltas, room.players);
+    try {
+      const correct = guess.trim() === round.subject;
+      const newGuess: FakeGuess = { fakeId: me.id, guess: guess.trim(), correct };
+      await addFakeGuess(code, newGuess, guesses);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  if (!fake) return null;
+  const twoFakes = accusedFakes.length > 1;
 
   return (
     <main className="min-h-dvh flex flex-col px-4 max-w-md mx-auto safe-top safe-bottom">
@@ -717,40 +853,86 @@ function Guess({ room, me, players, round, code, onExit }: {
           </div>
           <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
         </div>
+
         <div className="bg-green-500 text-white rounded-3xl p-6 text-center mb-3">
           <p className="text-sm opacity-80 mb-1">🎯 추리 성공</p>
-          <p className="text-3xl font-black tracking-tight">가짜 예술가 검거!</p>
+          <p className="text-3xl font-black tracking-tight">
+            {twoFakes ? `가짜 예술가 ${accusedFakes.length}명 검거!` : "가짜 예술가 검거!"}
+          </p>
         </div>
 
         <div className="bg-orange-50 rounded-2xl p-5 text-center mb-3">
           <p className="text-xs text-orange-700 mb-2">붙잡힌 가짜</p>
-          <div className="inline-flex items-center gap-2 mb-2">
-            <div className="w-5 h-5 rounded-full" style={{ background: fake.color.hex }} />
-            <p className="text-2xl font-black text-orange-800">{fake.name}</p>
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-2">
+            {accusedFakes.map((f) => (
+              <div key={f.id} className="inline-flex items-center gap-1.5">
+                <div className="w-5 h-5 rounded-full" style={{ background: f.color.hex }} />
+                <p className="text-xl font-black text-orange-800">{f.name}</p>
+              </div>
+            ))}
           </div>
           <p className="text-xs text-orange-700">범주: {round.category}</p>
         </div>
 
         <div className="bg-amber-100 text-amber-900 rounded-2xl p-4 mb-4 text-sm leading-relaxed text-center">
-          하지만 아직 끝이 아니에요.
-          <br />
-          <b>{fake.name}</b>님이 주제를 맞히면 <b>가짜팀의 승리</b>입니다 (+2점)
+          {twoFakes ? (
+            <>가짜 둘 중 <b>한 명이라도</b> 주제를 맞히면 <b>가짜팀의 승리</b>입니다 (+2점)</>
+          ) : (
+            <>하지만 아직 끝이 아니에요.<br /><b>{accusedFakes[0]?.name}</b>님이 주제를 맞히면 <b>가짜팀의 승리</b>입니다 (+2점)</>
+          )}
         </div>
 
         <ResultCanvas strokes={round.strokes || []} className="mb-4" />
 
-        {isMyTurn ? (
+        {isMeAccusedFake && !iAlreadyGuessed && (
           <>
+            <p className="text-xs text-gray-600 mb-2 font-semibold">
+              {twoFakes ? "당신의 정답을 조용히 입력하세요 (다른 가짜와 공유되지 않아요)" : "정답을 추측해서 입력하세요"}
+            </p>
             <input type="text" value={guess} onChange={(e) => setLocalGuess(e.target.value)}
-              placeholder="주제 추측해서 입력" autoFocus
+              placeholder="주제 추측" autoFocus
               className="w-full px-4 py-3.5 rounded-xl border border-black/10 bg-white text-base outline-none focus:border-ink mb-3" />
-            <button onClick={submit} disabled={submitting} className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
+            <button onClick={submit} disabled={submitting || !guess.trim()}
+              className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
               {submitting ? "제출 중..." : "정답 제출"}
             </button>
           </>
-        ) : (
+        )}
+
+        {isMeAccusedFake && iAlreadyGuessed && (
+          <div className="bg-green-50 text-green-700 rounded-2xl py-4 text-center text-sm font-semibold mb-3">
+            ✓ 제출 완료. 다른 가짜 대기 중...
+          </div>
+        )}
+
+        {twoFakes && (
+          <div className="bg-white rounded-2xl p-3 border border-black/5 mb-2">
+            <p className="text-xs text-gray-500 mb-2 font-semibold">
+              추측 현황 ({guesses.length}/{accusedFakes.length})
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {accusedFakes.map((f) => {
+                const done = alreadyGuessedIds.includes(f.id);
+                return (
+                  <div key={f.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs ${done ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-600"}`}>
+                    <span className="w-2 h-2 rounded-full" style={{ background: f.color.hex }} />
+                    {f.name}{done && " ✓"}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {!isMeAccusedFake && !allGuessed && (
           <div className="bg-gray-100 rounded-2xl py-4 text-center text-sm text-gray-500">
-            <span className="pulse-dot">●</span> {fake.name}이(가) 답을 입력 중...
+            <span className="pulse-dot">●</span> {twoFakes ? "가짜들이" : accusedFakes[0]?.name + "이(가)"} 답을 입력 중...
+          </div>
+        )}
+
+        {allGuessed && (
+          <div className="bg-gray-100 rounded-2xl py-4 text-center text-sm text-gray-500">
+            <span className="pulse-dot">●</span> 결과 집계 중...
           </div>
         )}
       </div>

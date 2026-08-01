@@ -2,12 +2,34 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+type RecentRoom = {
+  code: string;
+  playerId: string;
+  playerName: string;
+  savedAt: number;
+};
 
 export default function Home() {
   const router = useRouter();
   const [showJoin, setShowJoin] = useState(false);
   const [joinCode, setJoinCode] = useState("");
+  const [recent, setRecent] = useState<RecentRoom | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("recentRoom");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as RecentRoom;
+      // 24시간 지난 건 안 보여줌
+      if (Date.now() - parsed.savedAt > 24 * 60 * 60 * 1000) {
+        localStorage.removeItem("recentRoom");
+        return;
+      }
+      setRecent(parsed);
+    } catch {}
+  }, []);
 
   function handleJoin() {
     const code = joinCode.trim();
@@ -18,6 +40,11 @@ export default function Home() {
     router.push(`/room/${code}`);
   }
 
+  function clearRecent() {
+    localStorage.removeItem("recentRoom");
+    setRecent(null);
+  }
+
   return (
     <main className="min-h-dvh flex flex-col items-center justify-center px-6 safe-top safe-bottom">
       <div className="max-w-md w-full">
@@ -25,6 +52,27 @@ export default function Home() {
           <h1 className="text-5xl font-black tracking-tight mb-2">가짜 예술가</h1>
           <p className="text-gray-500 text-sm">한 명의 가짜를 찾아라</p>
         </div>
+
+        {recent && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-3">
+            <p className="text-xs text-amber-700 mb-2 font-semibold">📌 최근 참여한 방</p>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-lg font-black tracking-widest text-amber-900">{recent.code}</span>
+              <span className="text-xs text-amber-700">· {recent.playerName}</span>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => router.push(`/room/${recent.code}`)}
+                className="flex-1 bg-amber-600 text-white rounded-xl py-2.5 font-bold text-sm">
+                다시 입장
+              </button>
+              <button onClick={clearRecent}
+                className="bg-white border border-amber-200 rounded-xl px-3 py-2.5 text-xs text-amber-700 font-semibold">
+                지우기
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-3">
           <Link href="/room/new" className="block w-full bg-ink text-white rounded-2xl p-5 active:scale-[0.98] transition-transform">
             <div className="flex items-center gap-3 mb-1">

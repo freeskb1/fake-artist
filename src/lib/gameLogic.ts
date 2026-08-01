@@ -96,27 +96,41 @@ export function isStrokeValid(points: Point[], w: number, h: number): boolean {
   return total >= 10 || net >= 10;
 }
 
-export function tallyVotes(votes: Record<string, string>): {
-  accusedId: string | null;
-  tied: boolean;
-} {
+/**
+ * 투표 집계 - 상위 topN명의 ID 반환
+ * votes: 각 투표자 → 지목한 사람 배열 (1명 지목 = [id1], 2명 지목 = [id1, id2])
+ * topN: 잡을 인원 (가짜 1명 모드 = 1, 가짜 2명 모드 = 2)
+ * 
+ * 동점 처리:
+ * - topN 위치의 사람과 그 뒤 사람이 동표면 tied=true, accusedIds는 앞선 사람들만
+ * - 예: topN=2, 결과가 [A:3, B:2, C:2] → tied=true, accusedIds=[A] (B/C 갈림)
+ */
+export function tallyVotes(
+  votes: Record<string, string[] | string>,
+  topN: number = 1
+): { accusedIds: string[]; tied: boolean } {
   const tally: Record<string, number> = {};
   Object.values(votes).forEach((v) => {
-    tally[v] = (tally[v] || 0) + 1;
+    // 하위 호환: 문자열이면 배열로 변환
+    const arr = Array.isArray(v) ? v : (v ? [v] : []);
+    arr.forEach((id) => {
+      tally[id] = (tally[id] || 0) + 1;
+    });
   });
-  let maxVotes = 0;
-  let accused: string | null = null;
+  const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+  if (sorted.length === 0) return { accusedIds: [], tied: false };
+
+  const accusedIds: string[] = [];
   let tied = false;
-  Object.entries(tally).forEach(([k, v]) => {
-    if (v > maxVotes) {
-      maxVotes = v;
-      accused = k;
-      tied = false;
-    } else if (v === maxVotes) {
+  for (let i = 0; i < Math.min(topN, sorted.length); i++) {
+    // 다음 사람과 동점이면 tied
+    if (i === topN - 1 && sorted[i + 1] && sorted[i][1] === sorted[i + 1][1]) {
       tied = true;
+      break;
     }
-  });
-  return { accusedId: accused, tied };
+    accusedIds.push(sorted[i][0]);
+  }
+  return { accusedIds, tied };
 }
 
 /**
