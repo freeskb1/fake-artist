@@ -47,10 +47,13 @@ export default function RoomPage() {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const configured = isFirebaseConfigured();
 
+  const [playerIdLoaded, setPlayerIdLoaded] = useState(false);
+
   useEffect(() => {
     if (!code) return;
     const stored = localStorage.getItem(`room_${code}_playerId`);
     if (stored) setMyPlayerId(stored);
+    setPlayerIdLoaded(true);
   }, [code]);
 
   useEffect(() => {
@@ -122,7 +125,7 @@ export default function RoomPage() {
     );
   }
 
-  if (loading) return <main className="min-h-dvh flex items-center justify-center"><p className="text-sm text-gray-500">방 정보 불러오는 중...</p></main>;
+  if (loading || !playerIdLoaded) return <main className="min-h-dvh flex items-center justify-center"><p className="text-sm text-gray-500">방 정보 불러오는 중...</p></main>;
 
   if (notFound) {
     return (
