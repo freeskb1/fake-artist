@@ -326,6 +326,7 @@ export async function resetForNextRound(
         currentGuessingFakeId: null,
         fakeGuesses: [],
         outcome: null,
+        drawOrder: [],
       },
       phase: "topic-setup" as GamePhase,
       qmRotationIndex: opts.nextRotationIndex,
@@ -348,6 +349,22 @@ export async function resetScores(code: string, players: Record<string, Player>)
   };
   Object.keys(players).forEach((pid) => {
     updates[`players/${pid}/score`] = 0;
+    updates[`players/${pid}/readyForNextRound`] = false;
+  });
+  await update(roomRef(code), updates);
+}
+
+/**
+ * 방과 멤버·점수는 유지한 채 대기실 화면으로 이동
+ * 방장이 결과 화면에서 모드/색/기타 설정 변경하고 싶을 때
+ */
+export async function returnToLobby(code: string, players: Record<string, Player>) {
+  const updates: Record<string, unknown> = {
+    round: null,
+    phase: "lobby" as GamePhase,
+    updatedAt: Date.now(),
+  };
+  Object.keys(players).forEach((pid) => {
     updates[`players/${pid}/readyForNextRound`] = false;
   });
   await update(roomRef(code), updates);

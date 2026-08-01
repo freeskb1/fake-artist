@@ -101,6 +101,7 @@ export default function LocalGamePage() {
         currentGuessingFakeId: null,
         fakeGuesses: [],
         outcome: null,
+        drawOrder: [],
       };
       setRound(tmpRound);
       setPhase("topic-setup");
@@ -132,7 +133,7 @@ export default function LocalGamePage() {
   function advanceReveal() {
     if (!round) return;
     if (revealIndex >= revealQueue.length - 1) {
-      const firstDrawer = nextArtistId(null, players, round.questionMasterId);
+      const firstDrawer = nextArtistId(null, round.drawOrder || []);
       setRound({ ...round, currentTurnPlayerId: firstDrawer, turnIndex: 0 });
       setPhase("drawing");
       setPassingTo(firstDrawer);
@@ -157,7 +158,7 @@ export default function LocalGamePage() {
           setPhase("voting-local");
           setPassingTo(null);
         } else {
-          const nextDrawerId = nextArtistId(round.currentTurnPlayerId, players, round.questionMasterId);
+          const nextDrawerId = nextArtistId(round.currentTurnPlayerId, round.drawOrder || []);
           setRound({ ...round, strokes: newStrokes, turnIndex: newTurnIndex, liveStroke: null, currentTurnPlayerId: nextDrawerId });
           setPassingTo(nextDrawerId);
         }
@@ -483,7 +484,8 @@ function Drawing({
 }) {
   const currentPlayer = players.find((p) => p.id === round.currentTurnPlayerId);
   if (!currentPlayer) return null;
-  const drawers = players.filter((p) => p.id !== round.questionMasterId);
+  const drawOrderIds = round.drawOrder || players.filter((p) => p.id !== round.questionMasterId).map((p) => p.id);
+  const drawers = drawOrderIds.map((id) => players.find((p) => p.id === id)).filter((p): p is Player => !!p);
 
   return (
     <div className="py-3 flex-1 flex flex-col min-h-0">

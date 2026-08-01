@@ -54,6 +54,7 @@ export type RoundState = {
   currentGuessingFakeId: string | null;
   fakeGuesses: FakeGuess[];
   outcome: "fake_hidden" | "fake_won" | "artists_won" | "mixed" | null;
+  drawOrder: string[]; // 그림 그리는 순서 (셔플됨, 출제자 제외)
 };
 
 export type TopicCard = {

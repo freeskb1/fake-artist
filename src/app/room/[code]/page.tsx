@@ -12,7 +12,7 @@ import {
   startRound, startTopicSetup, setLiveStroke as fbSetLiveStroke,
   updateRound, markRoleViewed, castVote, addAccusedId,
   setCurrentGuessingFake, addFakeGuess,
-  finalizeOutcome, resetForNextRound, resetScores,
+  finalizeOutcome, resetForNextRound, resetScores, returnToLobby,
   setMode as fbSetMode, setTwoFakes as fbSetTwoFakes,
   changeColor, markReadyForNextRound,
   setPlayerName as fbSetPlayerName, updateRoomPhase,
@@ -336,6 +336,19 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
           </div>
         )}
 
+        {isHost && players.some((p) => p.score > 0) && (
+          <button
+            onClick={async () => {
+              if (confirm("점수를 모두 0으로 초기화할까요?")) {
+                await resetScores(code, room.players);
+              }
+            }}
+            className="w-full bg-white border border-black/10 rounded-xl py-2.5 font-semibold text-xs text-gray-600 mb-2"
+          >
+            점수 초기화하고 새로 시작
+          </button>
+        )}
+
         {isHost ? (
           <button onClick={handleStart} disabled={starting || !canStart} className="w-full bg-ink text-white rounded-2xl py-4 font-bold text-base disabled:opacity-30">
             {starting ? "시작 중..." : canStart ? "게임 시작" : `${minPlayers - players.length}명 더 필요`}
@@ -410,7 +423,7 @@ function RoleReveal({ room, me, players, round, code, isHost, onExit }: {
   }
 
   async function startDrawing() {
-    const firstDrawer = nextArtistId(null, players, round.questionMasterId);
+    const firstDrawer = nextArtistId(null, round.drawOrder || []);
     await updateRound(code, { currentTurnPlayerId: firstDrawer, turnIndex: 0 });
     await updateRoomPhase(code, "drawing");
   }
@@ -488,7 +501,8 @@ function Drawing({ room, me, players, round, code, onExit }: {
   const isQM = me.id === round.questionMasterId;
   const isFake = round.fakeArtistIds.includes(me.id);
   const advancingRef = useRef(false);
-  const drawers = players.filter((p) => p.id !== round.questionMasterId);
+  const drawOrderIds = round.drawOrder || players.filter((p) => p.id !== round.questionMasterId).map((p) => p.id);
+  const drawers = drawOrderIds.map((id) => players.find((p) => p.id === id)).filter((p): p is Player => !!p);
 
   const handleLiveStroke = useCallback((stroke: Stroke | null) => {
     if (!isMyTurn) return;
@@ -506,7 +520,7 @@ function Drawing({ room, me, players, round, code, onExit }: {
         await updateRound(code, { currentTurnPlayerId: null });
         await updateRoomPhase(code, "voting");
       } else {
-        const nextDrawerId = nextArtistId(round.currentTurnPlayerId, players, round.questionMasterId);
+        const nextDrawerId = nextArtistId(round.currentTurnPlayerId, round.drawOrder || []);
         await updateRound(code, { currentTurnPlayerId: nextDrawerId });
       }
       advancingRef.current = false;
@@ -919,6 +933,15 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
               </>
             )}
           </>
+        )}
+
+        {!matchEnded && isHost && (
+          <button
+            onClick={async () => { await returnToLobby(code, room.players); }}
+            className="w-full bg-white border border-black/10 rounded-2xl py-3 font-semibold text-sm text-gray-600 mb-2"
+          >
+            대기실로 (모드/설정 변경)
+          </button>
         )}
 
         {matchEnded && isHost && (

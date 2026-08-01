@@ -20,8 +20,9 @@ export function createRound(
   const fakeCount = twoFakes ? 2 : 1;
   const fakeIds = shuffled.slice(0, fakeCount).map((p) => p.id);
 
-  // 그림 참여 인원
+  // 그림 참여 인원 + 그리는 순서 셔플
   const drawers = players.filter((p) => p.id !== questionMasterId);
+  const drawOrder = [...drawers].sort(() => Math.random() - 0.5).map((p) => p.id);
   const maxTurns = 2 * drawers.length;
 
   return {
@@ -40,6 +41,7 @@ export function createRound(
     currentGuessingFakeId: null,
     fakeGuesses: [],
     outcome: null,
+    drawOrder,
   };
 }
 
@@ -59,23 +61,18 @@ export function nextQuestionMaster(
 }
 
 /**
- * 다음 그림 그릴 사람
- * questionMasterId === null이면 출제자 없음 → 전원 순환
+ * 다음 그림 그릴 사람 (drawOrder 기반 - 셔플된 순서)
+ * currentPlayerId가 null이면 drawOrder의 첫 번째 반환
  */
 export function nextArtistId(
   currentPlayerId: string | null,
-  players: Player[],
-  questionMasterId: string | null
+  drawOrder: string[]
 ): string {
-  if (!currentPlayerId) {
-    return players.find((p) => p.id !== questionMasterId)!.id;
-  }
-  const currentIdx = players.findIndex((p) => p.id === currentPlayerId);
-  let n = (currentIdx + 1) % players.length;
-  while (questionMasterId && players[n].id === questionMasterId) {
-    n = (n + 1) % players.length;
-  }
-  return players[n].id;
+  if (!drawOrder || drawOrder.length === 0) return "";
+  if (!currentPlayerId) return drawOrder[0];
+  const currentIdx = drawOrder.indexOf(currentPlayerId);
+  if (currentIdx < 0) return drawOrder[0];
+  return drawOrder[(currentIdx + 1) % drawOrder.length];
 }
 
 export function distance(a: Point, b: Point, sx: number, sy: number): number {
