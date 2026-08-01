@@ -47,7 +47,7 @@ export async function createRoom(hostName: string): Promise<{ code: string; play
       code,
       hostId: playerId,
       phase: "lobby",
-      mode: "select",
+      mode: "auto",
       twoFakes: false,
       players: { [playerId]: host },
       playerOrder: [playerId],
@@ -327,6 +327,9 @@ export async function resetForNextRound(
         fakeGuesses: [],
         outcome: null,
         drawOrder: [],
+        voteRound: 1,
+        revealedTally: null,
+        revoteCandidateIds: null,
       },
       phase: "topic-setup" as GamePhase,
       qmRotationIndex: opts.nextRotationIndex,
@@ -420,7 +423,6 @@ export async function skipCurrentTurn(
   const nextTurnPlayerId = drawOrder[nextIdx];
   const newTurnIndex = currentTurnIndex + 1;
   if (newTurnIndex >= maxTurns) {
-    // 그리기 끝 → voting
     await update(roomChildRef(code, "round"), {
       currentTurnPlayerId: null,
       turnIndex: newTurnIndex,
@@ -434,4 +436,36 @@ export async function skipCurrentTurn(
       liveStroke: null,
     });
   }
+}
+
+/**
+ * 투표 결과 공개 화면으로 전환
+ * tallyMap과 재투표 여부를 라운드에 기록하고 phase = "vote-reveal"로
+ */
+export async function revealVoteResult(
+  code: string,
+  tallyMap: Record<string, number>,
+  accusedIds: string[],
+  needsRevote: boolean,
+  revoteCandidateIds: string[]
+): Promise<void> {
+  await update(roomChildRef(code, "round"), {
+    revealedTally: tallyMap,
+    accusedIds,
+    revoteCandidateIds: needsRevote ? revoteCandidateIds : null,
+  });
+  await updateRoomPhase(code, "vote-reveal");
+}
+
+/**
+ * 재투표 시작 - votes 초기화, voteRound 2로, phase = voting
+ */
+export async function startRevote(code: string): Promise<void> {
+  await update(roomChildRef(code, "round"), {
+    votes: {},
+    voteRound: 2,
+    revealedTally: null,
+    accusedIds: [],
+  });
+  await updateRoomPhase(code, "voting");
 }

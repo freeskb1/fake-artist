@@ -42,6 +42,9 @@ export function createRound(
     fakeGuesses: [],
     outcome: null,
     drawOrder,
+    voteRound: 1,
+    revealedTally: null,
+    revoteCandidateIds: null,
   };
 }
 
@@ -97,40 +100,82 @@ export function isStrokeValid(points: Point[], w: number, h: number): boolean {
 }
 
 /**
- * 투표 집계 - 상위 topN명의 ID 반환
- * votes: 각 투표자 → 지목한 사람 배열 (1명 지목 = [id1], 2명 지목 = [id1, id2])
- * topN: 잡을 인원 (가짜 1명 모드 = 1, 가짜 2명 모드 = 2)
+ * 투표 집계 - 상위 topN명 추출 + 동점 처리 + 재투표 판정
  * 
- * 동점 처리:
- * - topN 위치의 사람과 그 뒤 사람이 동표면 tied=true, accusedIds는 앞선 사람들만
- * - 예: topN=2, 결과가 [A:3, B:2, C:2] → tied=true, accusedIds=[A] (B/C 갈림)
+ * 룰:
+ * - topN=1: 상위 1명. 1등 동점 2명 이상 → tied
+ * - topN=2:
+ *   - X:3, Y:2, Z:1 → 상위 2명 [X, Y] 확정 검거
+ *   - X:3, Y:2, Z:2 → 2등 자리 동점(Y/Z) → X만 검거, 나머지는 놓아줌
+ *   - X:3, Y:3, Z:1 → 상위 2명 [X, Y] (같이 1등) → 둘 다 검거
+ *   - X:2, Y:2, Z:2 → 1등부터 동점 3명 이상 → 재투표
+ * 
+ * 반환:
+ * - accusedIds: 확정 검거 대상
+ * - tallyMap: 전체 표수 (결과 공개용)
+ * - needsRevote: 재투표 필요 여부
+ * - revoteCandidateIds: 재투표 후보 (동점자들)
  */
 export function tallyVotes(
   votes: Record<string, string[] | string>,
   topN: number = 1
-): { accusedIds: string[]; tied: boolean } {
+): {
+  accusedIds: string[];
+  tallyMap: Record<string, number>;
+  needsRevote: boolean;
+  revoteCandidateIds: string[];
+} {
   const tally: Record<string, number> = {};
   Object.values(votes).forEach((v) => {
-    // 하위 호환: 문자열이면 배열로 변환
     const arr = Array.isArray(v) ? v : (v ? [v] : []);
     arr.forEach((id) => {
       tally[id] = (tally[id] || 0) + 1;
     });
   });
   const sorted = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-  if (sorted.length === 0) return { accusedIds: [], tied: false };
+  if (sorted.length === 0) {
+    return { accusedIds: [], tallyMap: tally, needsRevote: false, revoteCandidateIds: [] };
+  }
 
+  // 표수별 그룹핑
+  // 예: [X:3, Y:3, Z:2, W:2, V:1] → [[X,Y]:3, [Z,W]:2, [V]:1]
+  const groups: { ids: string[]; count: number }[] = [];
+  for (const [id, count] of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && last.count === count) {
+      last.ids.push(id);
+    } else {
+      groups.push({ ids: [id], count });
+    }
+  }
+
+  // 상위부터 그룹 채워가며 topN 잡기
   const accusedIds: string[] = [];
-  let tied = false;
-  for (let i = 0; i < Math.min(topN, sorted.length); i++) {
-    // 다음 사람과 동점이면 tied
-    if (i === topN - 1 && sorted[i + 1] && sorted[i][1] === sorted[i + 1][1]) {
-      tied = true;
+  for (const g of groups) {
+    if (accusedIds.length + g.ids.length <= topN) {
+      // 이 그룹 전체가 검거
+      accusedIds.push(...g.ids);
+    } else {
+      // 이 그룹 일부만 잡을 수 있는데 동점 → 못 잡음
+      // 하지만 이미 확정 잡힌 사람이 있으면 그건 확정
+      // 재투표 조건: accusedIds가 없거나(1등부터 동점 3명이상), topN 채워야 하는데 남은 자리에 동점 3명이상
+      // 케이스별 분기:
+      if (accusedIds.length === 0) {
+        // 1등부터 못 정함
+        if (g.ids.length >= 3) {
+          // 3명 이상 동점 → 재투표
+          return { accusedIds: [], tallyMap: tally, needsRevote: true, revoteCandidateIds: g.ids };
+        }
+        // 1등 동점 2명은 위 if에서 이미 처리됐어야 함 (topN=2일 때). topN=1이고 1등 2명 동점이면 여기 옴
+        // 이 경우엔 재투표 대신 못 잡음 (원작 룰 준용)
+        return { accusedIds: [], tallyMap: tally, needsRevote: false, revoteCandidateIds: [] };
+      }
+      // 이미 몇 명은 잡았고, 남은 자리에 동점 → 잡은 사람만 확정, 나머지는 놓아줌
       break;
     }
-    accusedIds.push(sorted[i][0]);
   }
-  return { accusedIds, tied };
+
+  return { accusedIds, tallyMap: tally, needsRevote: false, revoteCandidateIds: [] };
 }
 
 /**

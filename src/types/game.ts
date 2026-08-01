@@ -13,16 +13,6 @@ export type Player = {
   readyForNextRound?: boolean;
 };
 
-export type GamePhase =
-  | "lobby"
-  | "topic-setup"
-  | "role-reveal"
-  | "drawing"
-  | "voting"
-  | "voting-local"
-  | "guess"
-  | "result";
-
 export type GameMode = "free" | "select" | "auto";
 
 export type Point = { x: number; y: number };
@@ -55,7 +45,22 @@ export type RoundState = {
   fakeGuesses: FakeGuess[];
   outcome: "fake_hidden" | "fake_won" | "artists_won" | "mixed" | null;
   drawOrder: string[]; // 그림 그리는 순서 (셔플됨, 출제자 제외)
+  // 투표 결과 공개 & 재투표
+  voteRound: number; // 1: 1차 투표, 2: 재투표
+  revealedTally?: Record<string, number> | null; // 결과 공개 화면에 뿌리는 표수
+  revoteCandidateIds?: string[] | null; // 재투표 후보 (동점자만)
 };
+
+export type GamePhase =
+  | "lobby"
+  | "topic-setup"
+  | "role-reveal"
+  | "drawing"
+  | "voting"
+  | "voting-local"
+  | "vote-reveal" // 투표 결과 공개 (모두에게)
+  | "guess"
+  | "result";
 
 export type TopicCard = {
   cat: string;

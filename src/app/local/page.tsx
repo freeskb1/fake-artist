@@ -20,7 +20,7 @@ import ConfirmModal from "@/components/ConfirmModal";
 export default function LocalGamePage() {
   const router = useRouter();
   const [phase, setPhase] = useState<GamePhase>("lobby");
-  const [mode, setMode] = useState<GameMode>("select");
+  const [mode, setMode] = useState<GameMode>("auto");
   const [twoFakes, setTwoFakes] = useState(false);
   const [players, setPlayers] = useState<Player[]>(() => buildPlayers(5));
   const [round, setRound] = useState<RoundState | null>(null);
@@ -102,6 +102,9 @@ export default function LocalGamePage() {
         fakeGuesses: [],
         outcome: null,
         drawOrder: [],
+        voteRound: 1,
+        revealedTally: null,
+        revoteCandidateIds: null,
       };
       setRound(tmpRound);
       setPhase("topic-setup");
