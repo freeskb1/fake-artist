@@ -99,6 +99,141 @@ export async function joinRoom(code: string, name: string): Promise<{ playerId: 
   return { playerId };
 }
 
+// ─────────────────────────────────────────────
+// 광배월드 자동 입장 (방 키 = h{광배월드 방 번호}, 플레이어 키 = 광배월드 uid)
+// ─────────────────────────────────────────────
+
+function hubPlayerName(name: string): string {
+  return (name || "").trim().slice(0, 8) || "플레이어";
+}
+
+/** 트랜잭션 안에서 방에 플레이어 추가 (이미 있으면 그대로) */
+function addPlayerInTx(room: RoomState, playerId: string, name: string): void {
+  const players: Record<string, Player> = room.players || {};
+  room.players = players;
+  if (players[playerId]) return;
+  const list = Object.values(players);
+  const usedColors = new Set(list.map((p) => p?.color?.hex));
+  const color = COLORS.find((c) => !usedColors.has(c.hex)) || COLORS[list.length % COLORS.length];
+  players[playerId] = {
+    id: playerId,
+    name: hubPlayerName(name),
+    color,
+    score: 0,
+    isHost: false,
+    connected: true,
+    readyForNextRound: false,
+  };
+  const order = Array.isArray(room.playerOrder) ? room.playerOrder : [];
+  room.playerOrder = order.includes(playerId) ? order : [...order, playerId];
+}
+
+/** 트랜잭션 안에서 방장을 playerId로 바꿈 */
+function setHostInTx(room: RoomState, playerId: string): void {
+  const players: Record<string, Player> = room.players || {};
+  room.players = players;
+  const prev = room.hostId;
+  if (prev && prev !== playerId && players[prev]) {
+    players[prev] = { ...players[prev], isHost: false };
+  }
+  if (players[playerId]) {
+    players[playerId] = { ...players[playerId], isHost: true };
+  }
+  room.hostId = playerId;
+}
+
+/**
+ * 광배월드 방장용: 이번 판(hubSid) 방을 멱등하게 준비.
+ * - 방이 없거나 hubSid가 다르면(예전 판) → 새 방 생성 (방장 = hostId)
+ * - 이미 이번 판 방이면 → 그대로. 단, 내가 빠져 있으면 다시 넣고, 방장이 넘어가 있었으면 되찾음
+ */
+export async function ensureHubRoom(
+  code: string, hostId: string, hostName: string, hubSid: string
+): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Firebase not configured");
+  await runTransaction(roomRef(code), (cur: RoomState | null) => {
+    if (cur && cur.hubSid === hubSid) {
+      const alreadyIn = !!cur.players?.[hostId];
+      if (alreadyIn && cur.hostId === hostId) return; // 변경 없음 (중단)
+      addPlayerInTx(cur, hostId, hostName);
+      setHostInTx(cur, hostId);
+      cur.updatedAt = Date.now();
+      return cur;
+    }
+    const now = Date.now();
+    const host: Player = {
+      id: hostId,
+      name: hubPlayerName(hostName),
+      color: COLORS[0],
+      score: 0,
+      isHost: true,
+      connected: true,
+      readyForNextRound: false,
+    };
+    const room: RoomState = {
+      code,
+      hostId,
+      phase: "lobby",
+      mode: "auto",
+      twoFakes: false,
+      players: { [hostId]: host },
+      playerOrder: [hostId],
+      round: null,
+      qmRotationIndex: 0,
+      roundCount: 0,
+      createdAt: now,
+      updatedAt: now,
+      hubSid,
+    };
+    return room;
+  });
+}
+
+/** 광배월드 방장이 (재접속 등으로) 방장 자리를 잃었으면 되찾음 */
+export async function reclaimHubHost(code: string, hostId: string, hubSid: string): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  await runTransaction(roomRef(code), (cur: RoomState | null) => {
+    if (!cur) return cur;
+    if (cur.hubSid !== hubSid) return; // 다른 판
+    if (!cur.players?.[hostId]) return; // 방에 없음
+    if (cur.hostId === hostId) return; // 이미 방장
+    setHostInTx(cur, hostId);
+    cur.updatedAt = Date.now();
+    return cur;
+  });
+}
+
+export type HubJoinResult = "joined" | "waiting" | "started" | "full";
+
+/**
+ * 광배월드 멤버용: 이번 판 방에 멱등하게 입장 (트랜잭션 — 여러 폰이 동시에 들어와도 안전)
+ * - 이미 players에 있으면 아무것도 쓰지 않음 (게임이 시작됐어도 재입장 가능)
+ * - 방이 없거나 hubSid가 다르면 "waiting" (방장을 기다리는 중)
+ */
+export async function joinHubRoom(
+  code: string, playerId: string, name: string, hubSid: string
+): Promise<HubJoinResult> {
+  const db = getDb();
+  if (!db) throw new Error("Firebase not configured");
+  const result = await runTransaction(roomRef(code), (cur: RoomState | null) => {
+    if (!cur) return cur; // 서버 값을 받으면 다시 호출됨
+    if (cur.hubSid !== hubSid) return; // 예전 판 방 → 기다림
+    if (cur.players?.[playerId]) return; // 이미 있음
+    if (cur.phase !== "lobby") return; // 이미 시작
+    if (Object.keys(cur.players || {}).length >= 10) return; // 가득 참
+    addPlayerInTx(cur, playerId, name);
+    cur.updatedAt = Date.now();
+    return cur;
+  });
+  const room = result.snapshot.val() as RoomState | null;
+  if (!room || room.hubSid !== hubSid) return "waiting";
+  if (room.players?.[playerId]) return "joined";
+  if (room.phase !== "lobby") return "started";
+  return "full";
+}
+
 export async function changeColor(
   code: string, playerId: string, newColor: PlayerColor
 ): Promise<{ success: boolean; reason?: string }> {

@@ -18,7 +18,9 @@ import {
   setMode as fbSetMode, setTwoFakes as fbSetTwoFakes,
   changeColor, markReadyForNextRound,
   setPlayerName as fbSetPlayerName, updateRoomPhase,
+  ensureHubRoom, joinHubRoom, reclaimHubHost,
 } from "@/lib/room";
+import type { HubJoinResult } from "@/lib/room";
 import {
   createRound, nextArtistId, tallyVotes, calculateScores,
   WIN_SCORE, nextQuestionMaster, getMinPlayers, getModeLabel, getModeDesc, predictNextQM,
@@ -32,6 +34,25 @@ import RoleCard from "@/components/RoleCard";
 import TopicPicker from "@/components/TopicPicker";
 import ColorPicker from "@/components/ColorPicker";
 import ConfirmModal from "@/components/ConfirmModal";
+
+// ── 광배월드 자동 입장 ──
+// 광배월드가 /?room=4821&sid=..&uid=..&name=..&host=1 로 보내면 홈이 /room/h4821?... 로 넘겨준다.
+type HubInfo = { sid: string; uid: string; name: string; host: boolean };
+
+function readHubInfo(code: string): HubInfo | null {
+  if (typeof window === "undefined") return null;
+  const q = new URLSearchParams(window.location.search);
+  const room = q.get("room");
+  const sid = q.get("sid");
+  const uid = q.get("uid");
+  if (!room || !sid || !uid) return null;
+  if (`h${room}` !== code) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(uid)) return null; // DB 키로 안전한 값만
+  return { sid, uid, name: q.get("name") || "", host: q.get("host") === "1" };
+}
+
+/** 광배월드 방에서 방장 자동 이양까지 기다리는 시간 (짧은 끊김에 방장을 뺏기지 않도록) */
+const HUB_HOST_TRANSFER_DELAY_MS = 60000;
 
 export default function RoomPage() {
   const params = useParams();
@@ -49,13 +70,56 @@ export default function RoomPage() {
   const configured = isFirebaseConfigured();
 
   const [playerIdLoaded, setPlayerIdLoaded] = useState(false);
+  const [hub, setHub] = useState<HubInfo | null>(null);
+  const [hubJoin, setHubJoin] = useState<HubJoinResult | null>(null);
+  const [hubError, setHubError] = useState("");
+  const hubJoiningRef = useRef(false);
 
   useEffect(() => {
     if (!code) return;
-    const stored = localStorage.getItem(`room_${code}_playerId`);
-    if (stored) setMyPlayerId(stored);
+    // 광배월드 쿼리가 있으면 쿼리 우선 (플레이어 id = 광배월드 uid)
+    const info = readHubInfo(code);
+    setHub(info);
+    if (info) {
+      try { localStorage.setItem(`room_${code}_playerId`, info.uid); } catch {}
+      setMyPlayerId(info.uid);
+    } else {
+      const stored = localStorage.getItem(`room_${code}_playerId`);
+      if (stored) setMyPlayerId(stored);
+    }
     setPlayerIdLoaded(true);
   }, [code]);
+
+  // 광배월드 방장: 이번 판 방을 멱등하게 준비
+  useEffect(() => {
+    if (!hub || !hub.host || !code || !configured) return;
+    ensureHubRoom(code, hub.uid, hub.name, hub.sid).catch((e) => {
+      setHubError((e as Error)?.message || "방을 만들지 못했어요");
+    });
+  }, [hub, code, configured]);
+
+  // 광배월드 멤버: 방장이 이번 판 방을 만들면 자동 입장
+  const hubRoomReady = !!hub && !!room && room.hubSid === hub.sid;
+  const hubInRoom = !!hub && !!room?.players?.[hub.uid];
+  const hubRoomPhase = room?.phase;
+  const hubPlayerCount = room?.players ? Object.keys(room.players).length : 0;
+  useEffect(() => {
+    if (!hub || hub.host || !hubRoomReady || hubInRoom || hubJoiningRef.current) return;
+    hubJoiningRef.current = true;
+    joinHubRoom(code, hub.uid, hub.name, hub.sid)
+      .then((r) => { setHubJoin(r); setHubError(""); })
+      .catch((e) => { setHubError((e as Error)?.message || "입장하지 못했어요"); })
+      .finally(() => { hubJoiningRef.current = false; });
+  }, [hub, hubRoomReady, hubInRoom, hubRoomPhase, hubPlayerCount, code]);
+
+  // 광배월드 방장이 (끊겼다 돌아와서) 방장 자리를 잃었으면 되찾기
+  useEffect(() => {
+    if (!hub || !hub.host || !room || room.hubSid !== hub.sid) return;
+    const meInRoom = room.players?.[hub.uid];
+    if (!meInRoom || meInRoom.connected === false) return;
+    if (room.hostId === hub.uid) return;
+    reclaimHubHost(code, hub.uid, hub.sid).catch(() => {});
+  }, [hub, room, code]);
 
   useEffect(() => {
     if (!code || !configured) { setLoading(false); return; }
@@ -92,9 +156,11 @@ export default function RoomPage() {
     if (onlinePlayers.length === 0) return;
     if (onlinePlayers[0].id !== myPlayerId) return;
     // 3초 뒤에도 방장이 여전히 오프라인이면 이전 시도
+    // (광배월드 방은 짧은 끊김에 방장을 뺏기지 않도록 훨씬 길게 기다림)
+    const delay = room.hubSid ? HUB_HOST_TRANSFER_DELAY_MS : 3000;
     const timer = setTimeout(() => {
       transferHostIfOffline(code).catch(() => {});
-    }, 3000);
+    }, delay);
     return () => clearTimeout(timer);
   }, [room, myPlayerId, code]);
 
@@ -128,6 +194,18 @@ export default function RoomPage() {
 
   if (loading || !playerIdLoaded) return <main className="min-h-dvh flex items-center justify-center"><p className="text-sm text-gray-500">방 정보 불러오는 중...</p></main>;
 
+  // 광배월드: 이번 판 방이 아직 없으면 (예전 판 방이 남아 있어도) 기다림
+  if (hub && (!room || room.hubSid !== hub.sid)) {
+    return (
+      <HubStatus
+        title={hub.host ? "방 만드는 중…" : "방장을 기다리는 중…"}
+        desc={hub.host ? "잠시만 기다려 주세요" : "방장이 들어오면 자동으로 입장해요"}
+        error={hubError}
+        spinner
+      />
+    );
+  }
+
   if (notFound) {
     return (
       <main className="min-h-dvh flex flex-col items-center justify-center px-6">
@@ -141,7 +219,13 @@ export default function RoomPage() {
 
   if (!room) return null;
 
-  const isInRoom = myPlayerId && room.players[myPlayerId];
+  const isInRoom = myPlayerId && room.players?.[myPlayerId];
+  if (!isInRoom && hub) {
+    // 광배월드 자동 입장 중 (닉네임 입력 없이)
+    if (hubJoin === "started") return <HubStatus title="이미 시작된 게임이에요" desc="이번 판이 끝나면 방장이 다음 게임을 고를 거예요" />;
+    if (hubJoin === "full") return <HubStatus title="방이 가득 찼어요" desc="가짜 예술가는 최대 10명까지 할 수 있어요" />;
+    return <HubStatus title="입장 중…" desc="" error={hubError} spinner />;
+  }
   if (!isInRoom) {
     if (room.phase !== "lobby") {
       return (
@@ -207,6 +291,21 @@ function JoinForm({ code, joinName, setJoinName, joining, joinError, onJoin }: {
           {joining ? "입장 중..." : "입장하기"}
         </button>
       </div>
+    </main>
+  );
+}
+
+function HubStatus({ title, desc, error, spinner }: {
+  title: string; desc?: string; error?: string; spinner?: boolean;
+}) {
+  return (
+    <main className="min-h-dvh flex flex-col items-center justify-center px-6 text-center safe-top safe-bottom">
+      {spinner && !error && (
+        <div className="w-10 h-10 mb-4 rounded-full border-4 border-black/10 border-t-ink animate-spin" />
+      )}
+      <p className="font-bold text-lg mb-1">{title}</p>
+      {desc ? <p className="text-sm text-gray-500">{desc}</p> : null}
+      {error ? <p className="text-sm text-red-600 mt-3">{error}</p> : null}
     </main>
   );
 }

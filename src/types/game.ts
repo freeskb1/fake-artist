@@ -81,4 +81,6 @@ export type RoomState = {
   roundCount: number;
   createdAt: number;
   updatedAt: number;
+  /** 광배월드에서 만든 방이면 그 판의 sid (쿼리 sid). 단독 방에는 없음 */
+  hubSid?: string;
 };

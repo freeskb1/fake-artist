@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,5 +16,13 @@ export const viewport: Viewport = {
   themeColor: "#E11D48",
 };
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html lang="ko"><body className="font-sans">{children}</body></html>;
+  return (
+    <html lang="ko">
+      <body className="font-sans">
+        {children}
+        {/* 광배월드 공용 스크립트: 광배월드에서 온 경우에만 동작 (돌아가기 버튼·다음 게임 따라가기) */}
+        <Script src="https://kwangbban.vercel.app/hub.js" strategy="afterInteractive" />
+      </body>
+    </html>
+  );
 }
