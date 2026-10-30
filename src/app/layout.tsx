@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ko">
       <body className="font-sans">
         {children}
-        {/* 광배월드 공용 스크립트: 광배월드에서 온 경우에만 동작 (돌아가기 버튼·다음 게임 따라가기) */}
+        {/* 말랑월드 공용 스크립트: 말랑월드에서 온 경우에만 동작 (돌아가기 버튼·다음 게임 따라가기) */}
         <Script src="https://kwangbban.vercel.app/hub.js" strategy="afterInteractive" />
       </body>
     </html>

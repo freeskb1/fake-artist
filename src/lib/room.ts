@@ -100,7 +100,7 @@ export async function joinRoom(code: string, name: string): Promise<{ playerId: 
 }
 
 // ─────────────────────────────────────────────
-// 광배월드 자동 입장 (방 키 = h{광배월드 방 번호}, 플레이어 키 = 광배월드 uid)
+// 말랑월드 자동 입장 (방 키 = h{말랑월드 방 번호}, 플레이어 키 = 말랑월드 uid)
 // ─────────────────────────────────────────────
 
 function hubPlayerName(name: string): string {
@@ -143,7 +143,7 @@ function setHostInTx(room: RoomState, playerId: string): void {
 }
 
 /**
- * 광배월드 방장용: 이번 판(hubSid) 방을 멱등하게 준비.
+ * 말랑월드 방장용: 이번 판(hubSid) 방을 멱등하게 준비.
  * - 방이 없거나 hubSid가 다르면(예전 판) → 새 방 생성 (방장 = hostId)
  * - 이미 이번 판 방이면 → 그대로. 단, 내가 빠져 있으면 다시 넣고, 방장이 넘어가 있었으면 되찾음
  */
@@ -190,7 +190,7 @@ export async function ensureHubRoom(
   });
 }
 
-/** 광배월드 방장이 (재접속 등으로) 방장 자리를 잃었으면 되찾음 */
+/** 말랑월드 방장이 (재접속 등으로) 방장 자리를 잃었으면 되찾음 */
 export async function reclaimHubHost(code: string, hostId: string, hubSid: string): Promise<void> {
   const db = getDb();
   if (!db) return;
@@ -208,7 +208,7 @@ export async function reclaimHubHost(code: string, hostId: string, hubSid: strin
 export type HubJoinResult = "joined" | "waiting" | "started" | "full";
 
 /**
- * 광배월드 멤버용: 이번 판 방에 멱등하게 입장 (트랜잭션 — 여러 폰이 동시에 들어와도 안전)
+ * 말랑월드 멤버용: 이번 판 방에 멱등하게 입장 (트랜잭션 — 여러 폰이 동시에 들어와도 안전)
  * - 이미 players에 있으면 아무것도 쓰지 않음 (게임이 시작됐어도 재입장 가능)
  * - 방이 없거나 hubSid가 다르면 "waiting" (방장을 기다리는 중)
  */

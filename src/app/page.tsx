@@ -18,7 +18,7 @@ export default function Home() {
   const [recent, setRecent] = useState<RecentRoom | null>(null);
   const [hubRedirecting, setHubRedirecting] = useState(false);
 
-  // 광배월드에서 넘어왔으면 (?room=..&sid=..&uid=..) 홈을 건너뛰고 바로 그 방으로
+  // 말랑월드에서 넘어왔으면 (?room=..&sid=..&uid=..) 홈을 건너뛰고 바로 그 방으로
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const room = q.get("room");
@@ -59,7 +59,7 @@ export default function Home() {
   if (hubRedirecting) {
     return (
       <main className="min-h-dvh flex items-center justify-center">
-        <p className="text-sm text-gray-500">광배월드 방으로 들어가는 중...</p>
+        <p className="text-sm text-gray-500">말랑월드 방으로 들어가는 중...</p>
       </main>
     );
   }

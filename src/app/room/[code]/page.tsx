@@ -35,8 +35,8 @@ import TopicPicker from "@/components/TopicPicker";
 import ColorPicker from "@/components/ColorPicker";
 import ConfirmModal from "@/components/ConfirmModal";
 
-// ── 광배월드 자동 입장 ──
-// 광배월드가 /?room=4821&sid=..&uid=..&name=..&host=1 로 보내면 홈이 /room/h4821?... 로 넘겨준다.
+// ── 말랑월드 자동 입장 ──
+// 말랑월드가 /?room=4821&sid=..&uid=..&name=..&host=1 로 보내면 홈이 /room/h4821?... 로 넘겨준다.
 type HubInfo = { sid: string; uid: string; name: string; host: boolean };
 
 function readHubInfo(code: string): HubInfo | null {
@@ -51,7 +51,7 @@ function readHubInfo(code: string): HubInfo | null {
   return { sid, uid, name: q.get("name") || "", host: q.get("host") === "1" };
 }
 
-/** 광배월드 방에서 방장 자동 이양까지 기다리는 시간 (짧은 끊김에 방장을 뺏기지 않도록) */
+/** 말랑월드 방에서 방장 자동 이양까지 기다리는 시간 (짧은 끊김에 방장을 뺏기지 않도록) */
 const HUB_HOST_TRANSFER_DELAY_MS = 60000;
 
 export default function RoomPage() {
@@ -77,7 +77,7 @@ export default function RoomPage() {
 
   useEffect(() => {
     if (!code) return;
-    // 광배월드 쿼리가 있으면 쿼리 우선 (플레이어 id = 광배월드 uid)
+    // 말랑월드 쿼리가 있으면 쿼리 우선 (플레이어 id = 말랑월드 uid)
     const info = readHubInfo(code);
     setHub(info);
     if (info) {
@@ -90,7 +90,7 @@ export default function RoomPage() {
     setPlayerIdLoaded(true);
   }, [code]);
 
-  // 광배월드 방장: 이번 판 방을 멱등하게 준비
+  // 말랑월드 방장: 이번 판 방을 멱등하게 준비
   useEffect(() => {
     if (!hub || !hub.host || !code || !configured) return;
     ensureHubRoom(code, hub.uid, hub.name, hub.sid).catch((e) => {
@@ -98,7 +98,7 @@ export default function RoomPage() {
     });
   }, [hub, code, configured]);
 
-  // 광배월드 멤버: 방장이 이번 판 방을 만들면 자동 입장
+  // 말랑월드 멤버: 방장이 이번 판 방을 만들면 자동 입장
   const hubRoomReady = !!hub && !!room && room.hubSid === hub.sid;
   const hubInRoom = !!hub && !!room?.players?.[hub.uid];
   const hubRoomPhase = room?.phase;
@@ -112,7 +112,7 @@ export default function RoomPage() {
       .finally(() => { hubJoiningRef.current = false; });
   }, [hub, hubRoomReady, hubInRoom, hubRoomPhase, hubPlayerCount, code]);
 
-  // 광배월드 방장이 (끊겼다 돌아와서) 방장 자리를 잃었으면 되찾기
+  // 말랑월드 방장이 (끊겼다 돌아와서) 방장 자리를 잃었으면 되찾기
   useEffect(() => {
     if (!hub || !hub.host || !room || room.hubSid !== hub.sid) return;
     const meInRoom = room.players?.[hub.uid];
@@ -156,7 +156,7 @@ export default function RoomPage() {
     if (onlinePlayers.length === 0) return;
     if (onlinePlayers[0].id !== myPlayerId) return;
     // 3초 뒤에도 방장이 여전히 오프라인이면 이전 시도
-    // (광배월드 방은 짧은 끊김에 방장을 뺏기지 않도록 훨씬 길게 기다림)
+    // (말랑월드 방은 짧은 끊김에 방장을 뺏기지 않도록 훨씬 길게 기다림)
     const delay = room.hubSid ? HUB_HOST_TRANSFER_DELAY_MS : 3000;
     const timer = setTimeout(() => {
       transferHostIfOffline(code).catch(() => {});
@@ -194,7 +194,7 @@ export default function RoomPage() {
 
   if (loading || !playerIdLoaded) return <main className="min-h-dvh flex items-center justify-center"><p className="text-sm text-gray-500">방 정보 불러오는 중...</p></main>;
 
-  // 광배월드: 이번 판 방이 아직 없으면 (예전 판 방이 남아 있어도) 기다림
+  // 말랑월드: 이번 판 방이 아직 없으면 (예전 판 방이 남아 있어도) 기다림
   if (hub && (!room || room.hubSid !== hub.sid)) {
     return (
       <HubStatus
@@ -221,7 +221,7 @@ export default function RoomPage() {
 
   const isInRoom = myPlayerId && room.players?.[myPlayerId];
   if (!isInRoom && hub) {
-    // 광배월드 자동 입장 중 (닉네임 입력 없이)
+    // 말랑월드 자동 입장 중 (닉네임 입력 없이)
     if (hubJoin === "started") return <HubStatus title="이미 시작된 게임이에요" desc="이번 판이 끝나면 방장이 다음 게임을 고를 거예요" />;
     if (hubJoin === "full") return <HubStatus title="방이 가득 찼어요" desc="가짜 예술가는 최대 10명까지 할 수 있어요" />;
     return <HubStatus title="입장 중…" desc="" error={hubError} spinner />;
