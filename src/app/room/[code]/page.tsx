@@ -53,6 +53,8 @@ function readHubInfo(code: string): HubInfo | null {
 
 /** 말랑월드 방에서 방장 자동 이양까지 기다리는 시간 (짧은 끊김에 방장을 뺏기지 않도록) */
 const HUB_HOST_TRANSFER_DELAY_MS = 60000;
+/** 일반 방: 방장이 새로고침(당겨서 새로고침 포함)하는 사이에 방장이 넘어가지 않도록 */
+const HOST_TRANSFER_DELAY_MS = 20000;
 
 export default function RoomPage() {
   const params = useParams();
@@ -131,9 +133,16 @@ export default function RoomPage() {
     return () => unsub();
   }, [code, configured]);
 
+  // 접속 상태: 방에 들어가 있는 동안 한 번만 걸어 두면 재연결 때마다 알아서 온라인으로 복귀
+  // (room이 바뀔 때마다 다시 걸지 않도록 "방에 있는지" 여부에만 반응)
+  const amInRoom = !!(myPlayerId && room?.players?.[myPlayerId]);
+  useEffect(() => {
+    if (!amInRoom || !myPlayerId || !code) return;
+    return setupPresence(code, myPlayerId);
+  }, [amInRoom, myPlayerId, code]);
+
   useEffect(() => {
     if (myPlayerId && code && room?.players?.[myPlayerId]) {
-      setupPresence(code, myPlayerId);
       // 최근 방 정보 저장
       localStorage.setItem("recentRoom", JSON.stringify({
         code,
@@ -155,9 +164,10 @@ export default function RoomPage() {
       .filter((p) => p && p.id !== room.hostId && p.connected !== false);
     if (onlinePlayers.length === 0) return;
     if (onlinePlayers[0].id !== myPlayerId) return;
-    // 3초 뒤에도 방장이 여전히 오프라인이면 이전 시도
+    // 잠시 뒤에도 방장이 여전히 오프라인이면 이전 시도
     // (말랑월드 방은 짧은 끊김에 방장을 뺏기지 않도록 훨씬 길게 기다림)
-    const delay = room.hubSid ? HUB_HOST_TRANSFER_DELAY_MS : 3000;
+    // (일반 방도 방장이 새로고침하는 동안 방장을 뺏기지 않게 20초)
+    const delay = room.hubSid ? HUB_HOST_TRANSFER_DELAY_MS : HOST_TRANSFER_DELAY_MS;
     const timer = setTimeout(() => {
       transferHostIfOffline(code).catch(() => {});
     }, delay);

@@ -265,15 +265,30 @@ export function subscribeRoom(code: string, cb: (room: RoomState | null) => void
   return () => unsub();
 }
 
-export function setupPresence(code: string, playerId: string) {
+/**
+ * 접속 상태 표시. 연결될 때마다(.info/connected) 다시 true로 쓰고 끊김 예약을 새로 건다.
+ * → 잠깐 끊겼다 돌아와도(onDisconnect가 이미 false로 바꾼 뒤) 자동으로 온라인 복귀.
+ * 반환값: 해제 함수 (방에서 나가면 끊김 예약도 취소 — 지운 자리에 connected만 남지 않게)
+ */
+export function setupPresence(code: string, playerId: string): () => void {
   const db = getDb();
-  if (!db) return;
+  if (!db) return () => {};
   const connRef = ref(db, `rooms/${code}/players/${playerId}/connected`);
-  set(connRef, true);
-  onDisconnect(connRef).set(false);
+  const unsub = onValue(ref(db, ".info/connected"), (snap) => {
+    if (snap.val() !== true) return;
+    onDisconnect(connRef).set(false)
+      .then(() => set(connRef, true))
+      .catch(() => {});
+  });
+  return () => {
+    unsub();
+    onDisconnect(connRef).cancel().catch(() => {});
+  };
 }
 
 export async function leaveRoom(code: string, playerId: string): Promise<void> {
+  // 끊김 예약 취소 (나간 뒤 창을 닫아도 지운 자리에 connected만 다시 생기지 않게)
+  await onDisconnect(roomChildRef(code, `players/${playerId}/connected`)).cancel().catch(() => {});
   const snap = await get(roomRef(code));
   if (!snap.exists()) return;
   const room = snap.val() as RoomState;
