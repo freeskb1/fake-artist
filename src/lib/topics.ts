@@ -16,18 +16,37 @@ export const TOPIC_POOL: TopicCard[] = [
   { cat: "동화/우화", icon: "📖", subjects: ["잭과콩나무","피터팬","빨간모자","피노키오","인어공주","헨젤과그레텔","알라딘","라푼젤","곰돌이푸","미녀와야수"] },
 ];
 
-export function getRandomCategory(): TopicCard {
-  return TOPIC_POOL[Math.floor(Math.random() * TOPIC_POOL.length)];
+// used = 이미 나온 정답 목록. 안 나온 것 중에서 뽑고, 다 나왔으면 전체에서 뽑음
+
+export function getRandomCategory(used: string[] = []): TopicCard {
+  const left = TOPIC_POOL.filter((c) => c.subjects.some((s) => !used.includes(s)));
+  const pool = left.length > 0 ? left : TOPIC_POOL;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
-export function getRandomSubject(cat: string): string {
+export function getRandomSubject(cat: string, used: string[] = []): string {
   const card = TOPIC_POOL.find((c) => c.cat === cat);
   if (!card) return "";
-  return card.subjects[Math.floor(Math.random() * card.subjects.length)];
+  const left = card.subjects.filter((s) => !used.includes(s));
+  const list = left.length > 0 ? left : card.subjects;
+  return list[Math.floor(Math.random() * list.length)];
 }
 
-export function pickRandomTopic(): { cat: string; subject: string } {
-  const card = getRandomCategory();
-  const subject = card.subjects[Math.floor(Math.random() * card.subjects.length)];
-  return { cat: card.cat, subject };
+export function pickRandomTopic(used: string[] = []): { cat: string; subject: string } {
+  const all = TOPIC_POOL.flatMap((c) => c.subjects.map((subject) => ({ cat: c.cat, subject })));
+  const left = all.filter((t) => !used.includes(t.subject));
+  const pool = left.length > 0 ? left : all;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/**
+ * 이번에 나온 정답을 추가한 새 used 목록.
+ * 기본 주제가 아니면(자유 입력) 추가 안 함. 전부 나왔으면 이번 것만 남기고 다시 시작.
+ */
+export function addUsedTopic(used: string[] | null | undefined, subject: string): string[] {
+  const all = TOPIC_POOL.flatMap((c) => c.subjects);
+  const prev = Array.isArray(used) ? used.filter((s) => all.includes(s)) : [];
+  if (!all.includes(subject)) return prev;
+  const next = prev.includes(subject) ? prev : [...prev, subject];
+  return next.length >= all.length ? [subject] : next;
 }

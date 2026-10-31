@@ -9,13 +9,31 @@ import {
   createRound, nextArtistId, calculateScores, WIN_SCORE,
   nextQuestionMaster, getMinPlayers, getModeLabel, getModeDesc,
 } from "@/lib/gameLogic";
-import { pickRandomTopic } from "@/lib/topics";
+import { pickRandomTopic, addUsedTopic } from "@/lib/topics";
 import DrawingCanvas from "@/components/DrawingCanvas";
 import ResultCanvas from "@/components/ResultCanvas";
 import PassDeviceOverlay from "@/components/PassDeviceOverlay";
 import RoleCard from "@/components/RoleCard";
 import TopicPicker from "@/components/TopicPicker";
 import ConfirmModal from "@/components/ConfirmModal";
+
+// 이 폰에서 이미 나온 정답들 (다 나올 때까지 다시 안 나오게)
+const USED_TOPICS_KEY = "local_usedTopics";
+
+function loadUsedTopics(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(USED_TOPICS_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUsedTopic(subject: string): void {
+  try {
+    localStorage.setItem(USED_TOPICS_KEY, JSON.stringify(addUsedTopic(loadUsedTopics(), subject)));
+  } catch {}
+}
 
 export default function LocalGamePage() {
   const router = useRouter();
@@ -75,7 +93,8 @@ export default function LocalGamePage() {
     setMatchEnded(false);
 
     if (mode === "auto") {
-      const { cat, subject } = pickRandomTopic();
+      const { cat, subject } = pickRandomTopic(loadUsedTopics());
+      saveUsedTopic(subject);
       const newRound = createRound(namedPlayers, mode, twoFakes, null, cat, subject);
       setRound(newRound);
       const queue = namedPlayers.map((p) => p.id);
@@ -118,6 +137,7 @@ export default function LocalGamePage() {
 
   function handleTopicConfirm(category: string, subject: string) {
     if (!round) return;
+    saveUsedTopic(subject);
     const newRound = createRound(players, mode, twoFakes, round.questionMasterId, category, subject);
     setRound(newRound);
 
@@ -402,7 +422,7 @@ function TopicSetupScreen({
         <h2 className="text-xl font-bold">주제 정하기</h2>
         <button onClick={onExit} className="text-xs text-gray-500 px-3 py-1.5 rounded-full bg-white border border-black/5 font-semibold">나가기</button>
       </div>
-      <TopicPicker qmName={qmName} mode={mode} onConfirm={onConfirm} />
+      <TopicPicker qmName={qmName} mode={mode} used={loadUsedTopics()} onConfirm={onConfirm} />
     </div>
   );
 }

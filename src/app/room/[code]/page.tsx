@@ -365,7 +365,7 @@ function Lobby({ room, me, players, code, isHost, onExit }: {
     try {
       if (room.mode === "auto") {
         // 빠른 모드: 자동 출제 → 바로 role-reveal
-        const { cat, subject } = pickRandomTopic();
+        const { cat, subject } = pickRandomTopic(room.usedTopics || []);
         const newRound = createRound(players, room.mode, room.twoFakes, null, cat, subject);
         await startRound(code, newRound);
       } else {
@@ -536,7 +536,7 @@ function TopicSetup({ room, me, players, round, code, onExit }: {
         </div>
 
         {isQM ? (
-          <TopicPicker qmName={me.name} mode={room.mode} onConfirm={handleConfirm} />
+          <TopicPicker qmName={me.name} mode={room.mode} used={room.usedTopics || []} onConfirm={handleConfirm} />
         ) : (
           <div className="bg-white rounded-2xl p-8 text-center">
             <p className="text-sm text-gray-500 mb-4">
@@ -1220,7 +1220,7 @@ function Result({ room, me, players, round, code, isHost, onExit }: {
     try {
       if (room.mode === "auto") {
         // 빠른 모드: 새 주제 뽑아 라운드 즉시 생성
-        const { cat, subject } = pickRandomTopic();
+        const { cat, subject } = pickRandomTopic(room.usedTopics || []);
         const newRound = createRound(players, room.mode, room.twoFakes, null, cat, subject);
         await resetForNextRound(code, { mode: "auto", round: newRound });
       } else {

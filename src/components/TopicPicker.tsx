@@ -8,9 +8,11 @@ type Props = {
   qmName: string;
   mode: GameMode; // "free" | "select"
   onConfirm: (category: string, subject: string) => void;
+  /** 이미 나온 정답들 — 랜덤은 이걸 피해서 뽑음 */
+  used?: string[];
 };
 
-export default function TopicPicker({ qmName, mode, onConfirm }: Props) {
+export default function TopicPicker({ qmName, mode, onConfirm, used = [] }: Props) {
   const [selectedCat, setSelectedCat] = useState<string | null>(null);
   const [freeCat, setFreeCat] = useState("");
   const [freeSub, setFreeSub] = useState("");
@@ -59,7 +61,7 @@ export default function TopicPicker({ qmName, mode, onConfirm }: Props) {
                 <span className="truncate">{card.cat}</span>
               </button>
             ))}
-            <button onClick={() => { const c = getRandomCategory(); setSelectedCat(c.cat); }}
+            <button onClick={() => { const c = getRandomCategory(used); setSelectedCat(c.cat); }}
               className="flex items-center gap-2 px-3 py-3 bg-bg border border-dashed border-black/30 rounded-xl text-sm font-semibold text-gray-500 active:bg-gray-100">
               <span className="text-lg">🎲</span>
               <span>아무거나</span>
@@ -90,7 +92,7 @@ export default function TopicPicker({ qmName, mode, onConfirm }: Props) {
             </button>
           ))}
         </div>
-        <button onClick={() => onConfirm(card.cat, getRandomSubject(card.cat))}
+        <button onClick={() => onConfirm(card.cat, getRandomSubject(card.cat, used))}
           className="w-full mb-2 py-2.5 bg-transparent border border-dashed border-black/30 rounded-xl text-xs text-gray-600 font-semibold flex items-center justify-center gap-1.5">
           <span>🎲</span> 이 중에서 랜덤으로
         </button>

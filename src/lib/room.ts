@@ -8,6 +8,7 @@ import {
   GameMode, PlayerColor, FakeGuess,
 } from "@/types/game";
 import { COLORS } from "./colors";
+import { addUsedTopic } from "./topics";
 import { generateRoomCode, generatePlayerId } from "./gameLogic";
 
 function roomRef(code: string) {
@@ -186,6 +187,8 @@ export async function ensureHubRoom(
       updatedAt: now,
       hubSid,
     };
+    // 같은 모임이 다시 열면 이미 나온 정답 목록은 이어서 씀
+    if (cur && Array.isArray(cur.usedTopics)) room.usedTopics = cur.usedTopics;
     return room;
   });
 }
@@ -344,6 +347,7 @@ export async function startRound(code: string, round: RoundState) {
     phase: "role-reveal" as GamePhase,
     updatedAt: Date.now(),
     roundCount: (room.roundCount || 0) + 1,
+    usedTopics: addUsedTopic(room.usedTopics, round.subject),
   };
   Object.keys(room.players || {}).forEach((pid) => {
     updates[`players/${pid}/readyForNextRound`] = false;
@@ -453,6 +457,7 @@ export async function resetForNextRound(
       phase: "role-reveal" as GamePhase,
       roundCount: (room.roundCount || 0) + 1,
       updatedAt: Date.now(),
+      usedTopics: addUsedTopic(room.usedTopics, opts.round.subject),
     };
     Object.keys(room.players || {}).forEach((pid) => {
       updates[`players/${pid}/readyForNextRound`] = false;

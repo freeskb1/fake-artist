@@ -83,4 +83,6 @@ export type RoomState = {
   updatedAt: number;
   /** 말랑월드에서 만든 방이면 그 판의 sid (쿼리 sid). 단독 방에는 없음 */
   hubSid?: string;
+  /** 이미 나온 정답들 (다 나올 때까지 다시 안 나오게). 말랑월드에서 다시 열어도 이어짐 */
+  usedTopics?: string[];
 };
